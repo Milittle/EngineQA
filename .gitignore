@@ -1,0 +1,21 @@
+# Rust artifacts
+/target
+backend/target
+
+# Node artifacts
+frontend/node_modules
+frontend/dist
+
+# Local environment files
+.env
+.env.local
+
+# Logs
+*.log
+
+# Local qdrant storage
+.qdrant-storage/
+
+# Local package caches (sandbox-friendly)
+.cargo_home/
+.npm/
