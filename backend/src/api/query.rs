@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
 use crate::{
-    config::AppConfig,
+    api::{error_code::ErrorCode, error_mapping},
     provider::{ChatMessage, InferenceProvider},
     rag::RetrievedChunk,
 };
@@ -122,8 +122,20 @@ where
         "received query request"
     );
 
-    // Step 1: Embed the query
-    let query_vector = provider.embed(question).await?;
+    // Step 1: Embed query
+    let query_vector = match provider.embed(question).await {
+        Ok(vec) => vec,
+        Err(e) => {
+            let error_code = error_mapping::map_provider_error(&e);
+            tracing::warn!(
+                trace_id = %trace_id,
+                error_code = %error_code,
+                error = %e,
+                "embedding failed"
+            );
+            return Ok(build_degraded_response(&trace_id, error_code, vec![]));
+        }
+    };
 
     // Step 2: Retrieve relevant chunks
     let retrieved_chunks = retriever.retrieve(query_vector, Some(req.top_k)).await;
@@ -139,8 +151,8 @@ where
             );
             return Ok(build_degraded_response(
                 &trace_id,
-                "RETRIEVAL_FAILED".to_string(),
-                e.to_string(),
+                ErrorCode::RetrievalFailed,
+                vec![],
             ));
         }
     };
@@ -154,12 +166,27 @@ where
     let answer = match provider.chat(messages, CHAT_TEMPERATURE, MAX_TOKENS).await {
         Ok(answer) => answer,
         Err(e) => {
+            let error_code = error_mapping::map_provider_error(&e);
             tracing::error!(
                 trace_id = %trace_id,
+                error_code = %error_code,
                 error = %e,
                 "chat generation failed"
             );
-            return Ok(build_degraded_response(&trace_id, "CHAT_FAILED".to_string(), e.to_string()));
+
+            // 如果是上游错误且应该降级，返回检索到的片段
+            let sources: Vec<QuerySource> =
+                chunks.into_iter().map(QuerySource::from).collect();
+
+            if error_mapping::should_degrade(error_code) {
+                return Ok(build_degraded_with_sources_response(
+                    &trace_id,
+                    error_code,
+                    sources,
+                ));
+            } else {
+                return Ok(build_degraded_response(&trace_id, error_code, vec![]));
+            }
         }
     };
 
@@ -215,17 +242,43 @@ fn build_no_match_response(trace_id: &str) -> Json<QueryResponse> {
         answer: "根据现有知识库，我没有找到相关的参考资料来回答这个问题。请尝试更具体的问题描述，或者联系技术团队获取更多帮助。".to_string(),
         sources: vec![],
         degraded: true,
-        error_code: Some("NO_MATCH".to_string()),
+        error_code: Some(ErrorCode::NoMatch.to_string()),
         trace_id: trace_id.to_string(),
     })
 }
 
-fn build_degraded_response(trace_id: &str, code: String, reason: String) -> Json<QueryResponse> {
+fn build_degraded_response(trace_id: &str, error_code: ErrorCode, sources: Vec<QuerySource>) -> Json<QueryResponse> {
+    let description = error_mapping::get_error_description(error_code);
+
     Json(QueryResponse {
-        answer: format!("服务暂时不可用，原因：{}", reason),
-        sources: vec![],
+        answer: format!("服务暂时不可用：{}。", description),
+        sources,
         degraded: true,
-        error_code: Some(code),
+        error_code: Some(error_code.to_string()),
+        trace_id: trace_id.to_string(),
+    })
+}
+
+fn build_degraded_with_sources_response(trace_id: &str, error_code: ErrorCode, sources: Vec<QuerySource>) -> Json<QueryResponse> {
+    let description = error_mapping::get_error_description(error_code);
+    let sources_text = if sources.is_empty() {
+        "没有找到相关的参考文档。".to_string()
+    } else {
+        format!(
+            "以下是一些相关的参考文档，您可以自行查阅：\n{}",
+            sources
+                .iter()
+                .map(|s| format!("- [{}] {}", s.title, s.path))
+                .collect::<Vec<_>>()
+                .join("\n")
+        )
+    };
+
+    Json(QueryResponse {
+        answer: format!("AI 生成服务暂时不可用：{}。\n\n{}", description, sources_text),
+        sources,
+        degraded: true,
+        error_code: Some(error_code.to_string()),
         trace_id: trace_id.to_string(),
     })
 }

@@ -1,3 +1,5 @@
+pub mod error_code;
+pub mod error_mapping;
 pub mod query;
 
 use axum::{Json, Router, routing::get, routing::post};
