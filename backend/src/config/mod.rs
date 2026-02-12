@@ -6,6 +6,7 @@ pub struct AppConfig {
     pub port: u16,
     pub infer_provider: String,
     pub qdrant_url: String,
+    pub knowledge_dir: String,
     pub internal_api: InternalApiConfig,
 }
 
@@ -77,6 +78,7 @@ impl AppConfig {
         let port = parse_u16(vars, "APP_PORT", 8080)?;
 
         let qdrant_url = optional_var(vars, "QDRANT_URL", "http://localhost:6333");
+        let knowledge_dir = optional_var(vars, "KNOWLEDGE_DIR", "./knowledge");
 
         let internal_api = InternalApiConfig {
             base_url: required_var(vars, "INTERNAL_API_BASE_URL")?,
@@ -99,6 +101,7 @@ impl AppConfig {
             port,
             infer_provider: optional_var(vars, "INFER_PROVIDER", "internal_api"),
             qdrant_url,
+            knowledge_dir,
             internal_api,
         })
     }
