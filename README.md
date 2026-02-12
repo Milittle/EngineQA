@@ -79,6 +79,77 @@ Response:
 }
 ```
 
+### `GET /api/status`
+System status endpoint.
+
+Response:
+```json
+{
+  "provider": "internal_api",
+  "model": "ad-qa-chat-v1",
+  "index_size": 128734,
+  "last_index_time": "2026-02-10T02:10:00Z",
+  "upstream_health": "ok",
+  "rate_limit_state": {
+    "rpm_limit": 120,
+    "current_rpm": 43
+  },
+  "qdrant_connected": true
+}
+```
+
+### `POST /api/feedback`
+Submit feedback for a query.
+
+Request:
+```json
+{
+  "question": "...",
+  "answer": "...",
+  "rating": "useful",
+  "comment": "定位很快",
+  "error_code": null,
+  "trace_id": "req_20260211_xxx"
+}
+```
+
+Response:
+```json
+{
+  "ok": true,
+  "id": "feedback_id"
+}
+```
+
+### `POST /api/reindex`
+Trigger reindexing job.
+
+### `GET /api/reindex`
+Get current reindex job status.
+
+## Frontend Pages
+
+### 问答页
+- 输入问题并获取答案
+- 显示参考来源和相关度
+- 降级模式提示
+- 反馈交互（有用/无用）
+- 自动保存到历史记录
+
+### 历史页
+- 查看最近的问答历史
+- 支持展开/收起答案
+- 删除单个记录
+- 清空所有记录
+- 本地存储（localStorage）
+
+### 状态页
+- 推理服务健康状态
+- 知识库索引规模
+- 速率限制状态
+- 触发重新索引
+- 查看索引任务结果
+
 ## Environment Variables
 
 See `.env.example` for all available configuration options.
