@@ -5,6 +5,7 @@ pub struct AppConfig {
     pub host: String,
     pub port: u16,
     pub infer_provider: String,
+    pub qdrant_url: String,
     pub internal_api: InternalApiConfig,
 }
 
@@ -75,6 +76,8 @@ impl AppConfig {
         let host = optional_var(vars, "APP_HOST", "127.0.0.1");
         let port = parse_u16(vars, "APP_PORT", 8080)?;
 
+        let qdrant_url = optional_var(vars, "QDRANT_URL", "http://localhost:6333");
+
         let internal_api = InternalApiConfig {
             base_url: required_var(vars, "INTERNAL_API_BASE_URL")?,
             token: required_var(vars, "INTERNAL_API_TOKEN")?,
@@ -95,6 +98,7 @@ impl AppConfig {
             host,
             port,
             infer_provider: optional_var(vars, "INFER_PROVIDER", "internal_api"),
+            qdrant_url,
             internal_api,
         })
     }

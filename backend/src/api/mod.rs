@@ -1,7 +1,11 @@
-use axum::{Json, Router, routing::get};
+pub mod query;
+
+use axum::{Json, Router, routing::get, routing::post};
 use serde::Serialize;
 
-pub fn router() -> Router {
+use crate::config::AppConfig;
+
+pub fn router(config: &AppConfig) -> Router {
     Router::new().route("/health", get(health))
 }
 
@@ -23,10 +27,11 @@ mod tests {
     use tower::ServiceExt;
 
     use crate::api;
+    use crate::config::AppConfig;
 
     #[tokio::test]
     async fn health_returns_200() {
-        let app = api::router();
+        let app = api::router(&AppConfig::from_env().expect("Config should load"));
         let response = app
             .oneshot(
                 Request::builder()
