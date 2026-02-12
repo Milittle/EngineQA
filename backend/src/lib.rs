@@ -6,6 +6,7 @@ pub mod provider;
 pub mod rag;
 
 use crate::{
+    api::feedback::FeedbackStore,
     api::reindex::JobManager,
     indexer::MarkdownIndexer,
     provider::InternalApiProvider,
@@ -27,7 +28,6 @@ pub fn create_app(
         Ok(indexer) => indexer,
         Err(e) => {
             tracing::warn!(error = %e, "failed to initialize indexer, reindex will be unavailable");
-            // We still return the router, but reindex will fail when called
             panic!("Indexer initialization failed: {}", e);
         }
     };
@@ -39,6 +39,9 @@ pub fn create_app(
     let qdrant_client = qdrant_client::Qdrant::from_url(&config.qdrant_url)
         .build()
         .expect("Failed to create Qdrant client");
+
+    // Initialize feedback store
+    let feedback_store = FeedbackStore::new();
 
     router
         .route(
@@ -54,10 +57,15 @@ pub fn create_app(
             "/api/status",
             axum::routing::get(api::status::handle_status),
         )
+        .route(
+            "/api/feedback",
+            axum::routing::post(api::feedback::handle_feedback),
+        )
         .axum::extension(config.clone())
         .with_state(provider)
         .with_state(retriever)
         .with_state(indexer)
         .with_state(job_manager)
         .with_state(qdrant_client)
+        .with_state(feedback_store)
 }

@@ -1,5 +1,6 @@
 pub mod error_code;
 pub mod error_mapping;
+pub mod feedback;
 pub mod query;
 pub mod reindex;
 pub mod status;
