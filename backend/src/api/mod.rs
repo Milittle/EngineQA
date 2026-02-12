@@ -2,6 +2,7 @@ pub mod error_code;
 pub mod error_mapping;
 pub mod query;
 pub mod reindex;
+pub mod status;
 
 use axum::{Json, Router, routing::get, routing::post};
 use serde::Serialize;
