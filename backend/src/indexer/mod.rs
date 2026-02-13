@@ -1,28 +1,31 @@
 use crate::{
     config::InternalApiConfig,
-    provider::{EmbeddingRequest, InternalApiProvider, ProviderError},
-    rag::VectorRetriever,
+    provider::{InferenceProvider, InternalApiProvider, ProviderError},
 };
 use qdrant_client::{
-    qdrant::{Payload, PayloadInterface, PointStruct, Value},
-    Qdrant,
+    qdrant::{
+        Condition, DeletePointsBuilder, Filter, PointStruct, ScrollPointsBuilder,
+        UpsertPointsBuilder, Value,
+    },
+    Payload, Qdrant,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet},
     fs,
     path::{Path, PathBuf},
+    sync::Arc,
     time::Instant,
 };
-use tokio::sync::Semaphore;
+use tokio::sync::{AcquireError, Semaphore};
 use tracing::{debug, error, info, warn};
 
 const DEFAULT_CHUNK_SIZE: usize = 1000; // 中文字符数
 const DEFAULT_OVERLAP: usize = 125; // 中文字符数
 const MAX_CONCURRENT_EMBEDDINGS: usize = 8;
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize)]
 pub struct IndexResult {
     pub total_files: usize,
     pub indexed_files: usize,
@@ -35,7 +38,7 @@ pub struct IndexResult {
     pub duration_ms: u128,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone)]
 struct FileMetadata {
     pub doc_id: String,
     pub path: String,
@@ -66,6 +69,9 @@ pub enum IndexerError {
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
+
+    #[error("Semaphore acquisition error: {0}")]
+    AcquireError(#[from] AcquireError),
 
     #[error("Markdown parsing error: {0}")]
     ParseError(String),
@@ -128,6 +134,7 @@ impl MarkdownIndexer {
 
         // Step 3: Determine which files need processing
         let files_to_index = self.determine_files_to_index(&md_files, &existing_files)?;
+        let indexed_files = files_to_index.len();
 
         info!(
             total_files = md_files.len(),
@@ -141,7 +148,7 @@ impl MarkdownIndexer {
         let mut failed_chunks = 0usize;
         let mut failed_files = 0usize;
 
-        let semaphore = Semaphore::new(MAX_CONCURRENT_EMBEDDINGS);
+        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_EMBEDDINGS));
 
         for file_result in files_to_index {
             match file_result {
@@ -173,7 +180,7 @@ impl MarkdownIndexer {
 
         info!(
             total_files = md_files.len(),
-            indexed_files = files_to_index.len(),
+            indexed_files,
             successful_chunks,
             failed_chunks,
             deleted_chunks,
@@ -183,8 +190,8 @@ impl MarkdownIndexer {
 
         Ok(IndexResult {
             total_files: md_files.len(),
-            indexed_files: files_to_index.len(),
-            skipped_files: md_files.len() - files_to_index.len(),
+            indexed_files,
+            skipped_files: md_files.len() - indexed_files,
             failed_files,
             total_chunks,
             successful_chunks,
@@ -226,19 +233,15 @@ impl MarkdownIndexer {
         let scroll_result = self
             .qdrant
             .scroll(
-                collection_name,
-                None,
-                10000,
-                None,
-                None,
-                None,
-                Some(vec!["doc_id".to_string(), "path".to_string(), "hash".to_string()]),
+                ScrollPointsBuilder::new(collection_name)
+                    .limit(10000)
+                    .with_payload(true),
             )
             .await?;
 
         let mut files_map = HashMap::new();
 
-        for point in scroll_result.result.points {
+        for point in scroll_result.result {
             if let Some(doc_id) = extract_payload_string(&point.payload, "doc_id") {
                 if let Some(path) = extract_payload_string(&point.payload, "path") {
                     if let Some(hash) = extract_payload_string(&point.payload, "hash") {
@@ -289,7 +292,7 @@ impl MarkdownIndexer {
         Ok(files_to_index)
     }
 
-    async fn process_file(&self, path: &Path, hash: &str) -> IndexerResult<(usize, usize)> {
+    async fn process_file(&self, path: &Path, _hash: &str) -> IndexerResult<(usize, usize)> {
         let content = fs::read_to_string(path)?;
         let relative_path = path
             .strip_prefix(&self.knowledge_dir)
@@ -309,10 +312,11 @@ impl MarkdownIndexer {
         let mut failed = 0;
 
         for chunk in chunks {
-            match self.embed_and_upsert(chunk).await {
+            let doc_id = chunk.doc_id.clone();
+            match self.embed_and_upsert(&chunk).await {
                 Ok(_) => successful += 1,
                 Err(e) => {
-                    error!(doc_id = %chunk.doc_id, error = %e, "failed to embed chunk");
+                    error!(doc_id = %doc_id, error = %e, "failed to embed chunk");
                     failed += 1;
                 }
             }
@@ -343,13 +347,14 @@ impl MarkdownIndexer {
                 if !buffer.trim().is_empty() {
                     let text = buffer.trim().to_string();
                     if !text.is_empty() {
+                        let hash = compute_hash(&text);
                         chunks.push(Chunk {
                             doc_id: doc_id.to_string(),
                             path: path.to_string(),
                             title_path: current_title_path.clone(),
                             section: current_section.clone(),
                             text,
-                            hash: compute_hash(&text),
+                            hash,
                         });
                     }
                 }
@@ -384,13 +389,14 @@ impl MarkdownIndexer {
         if !buffer.trim().is_empty() {
             let text = buffer.trim().to_string();
             if !text.is_empty() {
+                let hash = compute_hash(&text);
                 chunks.push(Chunk {
                     doc_id: doc_id.to_string(),
                     path: path.to_string(),
                     title_path: current_title_path,
                     section: current_section,
                     text,
-                    hash: compute_hash(&text),
+                    hash,
                 });
             }
         }
@@ -420,6 +426,7 @@ impl MarkdownIndexer {
             while start < total_chars {
                 let end = (start + self.chunk_size).min(total_chars);
                 let chunk_text: String = chars[start..end].iter().collect();
+                let hash = compute_hash(&chunk_text);
 
                 result.push(Chunk {
                     doc_id: format!("{}_chunk_{}", chunk.doc_id, chunk_num),
@@ -427,7 +434,7 @@ impl MarkdownIndexer {
                     title_path: chunk.title_path.clone(),
                     section: chunk.section.clone(),
                     text: chunk_text,
-                    hash: compute_hash(&chunk_text),
+                    hash,
                 });
 
                 start += self.chunk_size - self.overlap;
@@ -438,31 +445,31 @@ impl MarkdownIndexer {
         Ok(result)
     }
 
-    async fn embed_and_upsert(&self, chunk: Chunk) -> IndexerResult<()> {
+    async fn embed_and_upsert(&self, chunk: &Chunk) -> IndexerResult<()> {
         let vector = self.provider.embed(&chunk.text).await?;
 
         let point_id = format!("{}|{}", chunk.doc_id, chunk.hash);
 
         let mut payload = HashMap::new();
-        payload.insert("doc_id".to_string(), Value::from(chunk.doc_id));
-        payload.insert("path".to_string(), Value::from(chunk.path));
-        payload.insert("title_path".to_string(), Value::from(chunk.title_path));
-        payload.insert("section".to_string(), Value::from(chunk.section));
-        payload.insert("text".to_string(), Value::from(chunk.text));
-        payload.insert("hash".to_string(), Value::from(chunk.hash));
+        payload.insert("doc_id".to_string(), Value::from(chunk.doc_id.clone()));
+        payload.insert("path".to_string(), Value::from(chunk.path.clone()));
+        payload.insert(
+            "title_path".to_string(),
+            Value::from(chunk.title_path.clone()),
+        );
+        payload.insert("section".to_string(), Value::from(chunk.section.clone()));
+        payload.insert("text".to_string(), Value::from(chunk.text.clone()));
+        payload.insert("hash".to_string(), Value::from(chunk.hash.clone()));
 
         let point = PointStruct::new(
-            qdrant_client::qdrant::PointId::from(point_id),
+            point_id,
             vector,
             Payload::from(payload),
         );
 
         self.qdrant
-            .upsert_points_blocking(
-                "knowledge_chunks",
-                None,
-                vec![point],
-                None,
+            .upsert_points(
+                UpsertPointsBuilder::new("knowledge_chunks", vec![point]).wait(true),
             )
             .await?;
 
@@ -470,24 +477,26 @@ impl MarkdownIndexer {
     }
 
     async fn delete_file_chunks(&self, doc_id: &str) -> IndexerResult<()> {
-        let filter = qdrant_client::qdrant::Filter::must([
-            qdrant_client::qdrant::Condition::matches(
-                "doc_id",
-                qdrant_client::qdrant::MatchValue::Keyword(doc_id.to_string()),
-            ),
-        ]);
+        let filter = Filter::must([Condition::matches("doc_id", doc_id.to_string())]);
 
         self.qdrant
-            .delete_points("knowledge_chunks", None, filter, None)
+            .delete_points(
+                DeletePointsBuilder::new("knowledge_chunks")
+                    .points(filter)
+                    .wait(true),
+            )
             .await?;
 
         Ok(())
     }
 
-    async fn delete_obsolete_chunks(&self, current_files: &[(PathBuf, String)]) -> IndexerResult<u64> {
+    async fn delete_obsolete_chunks(
+        &self,
+        current_files: &[(PathBuf, String)],
+    ) -> IndexerResult<usize> {
         let existing_files = self.get_existing_files().await?;
 
-        let current_doc_ids: std::collections::HashSet<String> = current_files
+        let current_doc_ids: HashSet<String> = current_files
             .iter()
             .map(|(path, _)| {
                 let relative_path = path
@@ -499,7 +508,7 @@ impl MarkdownIndexer {
             })
             .collect();
 
-        let mut deleted_count = 0u64;
+        let mut deleted_count = 0usize;
 
         for doc_id in existing_files.keys() {
             if !current_doc_ids.contains(doc_id) {
@@ -526,9 +535,5 @@ fn extract_payload_string(
     payload: &HashMap<String, Value>,
     key: &str,
 ) -> Option<String> {
-    payload.get(key).and_then(|v| match v {
-        Value::Keyword(k) => Some(k.clone()),
-        Value::StringValue(s) => Some(s.clone()),
-        _ => None,
-    })
+    payload.get(key).and_then(|v| v.as_str().cloned())
 }

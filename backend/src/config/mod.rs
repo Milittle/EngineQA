@@ -83,7 +83,7 @@ impl AppConfig {
         let internal_api = InternalApiConfig {
             base_url: required_var(vars, "INTERNAL_API_BASE_URL")?,
             token: required_var(vars, "INTERNAL_API_TOKEN")?,
-            chat_path: optional_var(vars, "INTERNAL_API_CHAT_PATH", "/v1/chat/completions"),
+            chat_path: optional_var(vars, "INTERNAL_API_CHAT_PATH", "/chat/completions"),
             embed_path: optional_var(vars, "INTERNAL_API_EMBED_PATH", "/v1/embeddings"),
             chat_model: optional_var(vars, "INTERNAL_API_CHAT_MODEL", "ad-qa-chat-v1"),
             embed_model: optional_var(vars, "INTERNAL_API_EMBED_MODEL", "ad-embed-v1"),

@@ -1,7 +1,6 @@
 use crate::api::error_code::ErrorCode;
 use crate::provider::ProviderError;
 use reqwest::StatusCode;
-use std::collections::HashMap;
 
 /// 将 ProviderError 映射为业务错误码
 pub fn map_provider_error(error: &ProviderError) -> ErrorCode {

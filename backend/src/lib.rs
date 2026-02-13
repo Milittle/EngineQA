@@ -5,6 +5,8 @@ pub mod observability;
 pub mod provider;
 pub mod rag;
 
+use std::sync::Arc;
+
 use crate::{
     api::feedback::FeedbackStore,
     api::reindex::JobManager,
@@ -12,12 +14,22 @@ use crate::{
     provider::InternalApiProvider,
 };
 
+pub struct AppState {
+    pub config: config::AppConfig,
+    pub provider: InternalApiProvider,
+    pub retriever: rag::VectorRetriever,
+    pub indexer: MarkdownIndexer,
+    pub job_manager: JobManager,
+    pub qdrant_client: qdrant_client::Qdrant,
+    pub feedback_store: FeedbackStore,
+}
+
 pub fn create_app(
     config: &config::AppConfig,
     provider: InternalApiProvider,
     retriever: rag::VectorRetriever,
 ) -> axum::Router {
-    let router = api::router(config);
+    let router = api::router::<Arc<AppState>>(config);
 
     // Initialize indexer
     let indexer = match MarkdownIndexer::new(
@@ -43,10 +55,20 @@ pub fn create_app(
     // Initialize feedback store
     let feedback_store = FeedbackStore::new();
 
+    let state = Arc::new(AppState {
+        config: config.clone(),
+        provider,
+        retriever,
+        indexer,
+        job_manager,
+        qdrant_client,
+        feedback_store,
+    });
+
     router
         .route(
             "/api/query",
-            axum::routing::post(api::query::handle_query::<InternalApiProvider>),
+            axum::routing::post(api::query::handle_query),
         )
         .route(
             "/api/reindex",
@@ -61,11 +83,5 @@ pub fn create_app(
             "/api/feedback",
             axum::routing::post(api::feedback::handle_feedback),
         )
-        .axum::extension(config.clone())
-        .with_state(provider)
-        .with_state(retriever)
-        .with_state(indexer)
-        .with_state(job_manager)
-        .with_state(qdrant_client)
-        .with_state(feedback_store)
+        .with_state(state)
 }

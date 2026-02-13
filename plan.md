@@ -1,5 +1,10 @@
 # 广告引擎现网维优 QA 问答系统完整方案（Internal API 推理版）
 
+## 文档状态说明（2026-02-13）
+- 当前可运行基线：`backend-python/`（FastAPI）。
+- `backend/`（Rust）当前存在已知运行问题，暂不作为默认运行路径。
+- 本文档保留目标架构设计（含 Rust 方案），实际启动与运维以 `README.md`、`docs/startup-manual.md` 为准。
+
 ## 1. 目标与背景
 - 目标：建设一个面向广告引擎现网维优场景的中文 QA 系统，支持基于 Markdown 知识库的 RAG（检索增强生成）问答。
 - 核心诉求：

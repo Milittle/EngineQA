@@ -1,8 +1,13 @@
 use crate::{
-    api::error_code::ErrorCode,
-    indexer::{IndexerError, IndexResult, MarkdownIndexer},
+    indexer::{IndexerError, IndexResult},
+    AppState,
 };
-use axum::{extract::State, Json};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
@@ -123,6 +128,19 @@ pub enum ReindexError {
     InternalError(String),
 }
 
+impl IntoResponse for ReindexError {
+    fn into_response(self) -> Response {
+        match self {
+            ReindexError::JobInProgress => {
+                (StatusCode::CONFLICT, self.to_string()).into_response()
+            }
+            ReindexError::IndexerError(_) | ReindexError::InternalError(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+            }
+        }
+    }
+}
+
 /// POST /api/reindex 请求
 #[derive(Debug, Deserialize)]
 pub struct ReindexRequest {}
@@ -142,33 +160,33 @@ pub struct ReindexStatusResponse {
 
 /// 处理 /api/reindex POST 请求
 pub async fn handle_reindex(
-    manager: State<JobManager>,
-    indexer: State<MarkdownIndexer>,
+    State(state): State<Arc<AppState>>,
     _req: Json<ReindexRequest>,
 ) -> Result<Json<ReindexResponse>, ReindexError> {
     tracing::info!("received reindex request");
 
     // Start job
-    let job_id = manager.start_job().await?;
-    let manager_clone = manager.clone();
+    let job_id = state.job_manager.start_job().await?;
+    let job_id_for_task = job_id.clone();
+    let state_clone = state.clone();
 
     // Run indexing in background
     tokio::spawn(async move {
-        tracing::info!(job_id = %job_id, "started reindex job");
+        tracing::info!(job_id = %job_id_for_task, "started reindex job");
 
-        match indexer.index().await {
+        match state_clone.indexer.index().await {
             Ok(result) => {
                 tracing::info!(
-                    job_id = %job_id,
+                    job_id = %job_id_for_task,
                     successful = result.successful_chunks,
                     failed = result.failed_chunks,
                     "reindex job completed"
                 );
-                manager_clone.complete_job(result).await;
+                state_clone.job_manager.complete_job(result).await;
             }
             Err(e) => {
-                tracing::error!(job_id = %job_id, error = %e, "reindex job failed");
-                manager_clone.fail_job(e.to_string()).await;
+                tracing::error!(job_id = %job_id_for_task, error = %e, "reindex job failed");
+                state_clone.job_manager.fail_job(e.to_string()).await;
             }
         }
     });
@@ -181,9 +199,9 @@ pub async fn handle_reindex(
 
 /// 处理 /api/reindex GET 请求
 pub async fn handle_reindex_status(
-    manager: State<JobManager>,
+    State(state): State<Arc<AppState>>,
 ) -> Json<ReindexStatusResponse> {
-    let job = manager.get_current_job().await;
+    let job = state.job_manager.get_current_job().await;
 
     Json(ReindexStatusResponse { job })
 }

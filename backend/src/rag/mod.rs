@@ -1,6 +1,9 @@
 use qdrant_client::{
-    prelude::{QdrantClient, QdrantClientConfig},
-    qdrant::{value::Kind, Filter, SearchPoints, VectorStruct},
+    qdrant::{
+        value::Kind, CreateCollectionBuilder, Distance, OptimizersConfigDiffBuilder,
+        SearchPointsBuilder, VectorParamsBuilder,
+    },
+    Qdrant,
 };
 
 const COLLECTION_NAME: &str = "knowledge_chunks";
@@ -30,9 +33,6 @@ pub enum RetrieverError {
     #[error("Invalid payload format: {0}")]
     InvalidPayload(String),
 
-    #[error("Collection not found: {0}")]
-    CollectionNotFound(String),
-
     #[error("Score too low for all results")]
     NoResultsAboveThreshold,
 }
@@ -40,14 +40,12 @@ pub enum RetrieverError {
 pub type RetrieverResult<T> = Result<T, RetrieverError>;
 
 pub struct VectorRetriever {
-    client: QdrantClient,
+    client: Qdrant,
 }
 
 impl VectorRetriever {
     pub fn new(qdrant_url: &str) -> RetrieverResult<Self> {
-        let config = QdrantClientConfig::from_url(qdrant_url);
-        let client = QdrantClient::new(config)?;
-
+        let client = Qdrant::from_url(qdrant_url).build()?;
         Ok(Self { client })
     }
 
@@ -60,13 +58,9 @@ impl VectorRetriever {
 
         let search_result = self
             .client
-            .search_points(&SearchPoints {
-                collection_name: COLLECTION_NAME.into(),
-                vector: Some(VectorStruct::Dense(query_vector.into())),
-                limit: top_k,
-                with_payload: Some(true.into()),
-                ..Default::default()
-            })
+            .search_points(
+                SearchPointsBuilder::new(COLLECTION_NAME, query_vector, top_k).with_payload(true),
+            )
             .await?;
 
         if search_result.result.is_empty() {
@@ -104,8 +98,7 @@ impl VectorRetriever {
             payload
                 .get(key)
                 .and_then(|v| match &v.kind {
-                    Kind::Keyword(k) => Some(k.clone()),
-                    Kind::StringValue(s) => Some(s.clone()),
+                    Some(Kind::StringValue(s)) => Some(s.clone()),
                     _ => None,
                 })
                 .ok_or_else(|| RetrieverError::InvalidPayload(format!("Missing or invalid {key}")))
@@ -126,7 +119,7 @@ impl VectorRetriever {
         payload
             .get("text")
             .and_then(|v| match &v.kind {
-                Kind::StringValue(s) => Some(s.clone()),
+                Some(Kind::StringValue(s)) => Some(s.clone()),
                 _ => None,
             })
             .ok_or_else(|| {
@@ -135,39 +128,21 @@ impl VectorRetriever {
     }
 
     pub async fn ensure_collection_exists(&self) -> RetrieverResult<()> {
-        use qdrant_client::qdrant::{
-            CreateCollection, Distance, OptimizersConfigDiff, VectorParams, VectorsConfig,
-        };
-
-        let collections = self.client.list_collections().await?;
-
-        let exists = collections
-            .result
-            .into_iter()
-            .any(|c| c.name == COLLECTION_NAME);
-
-        if exists {
+        if self.client.collection_exists(COLLECTION_NAME).await? {
             return Ok(());
         }
 
         self.client
-            .create_collection(&CreateCollection {
-                collection_name: COLLECTION_NAME.into(),
-                vectors_config: Some(VectorsConfig::From(VectorParams {
-                    size: 1536,
-                    distance: Distance::Cosine.into(),
-                    ..Default::default()
-                })),
-                optimizers_config: Some(OptimizersConfigDiff {
-                    indexing_threshold: Some(20000),
-                    ..Default::default()
-                }),
-                ..Default::default()
-            })
+            .create_collection(
+                CreateCollectionBuilder::new(COLLECTION_NAME)
+                    .vectors_config(VectorParamsBuilder::new(1536, Distance::Cosine))
+                    .optimizers_config(
+                        OptimizersConfigDiffBuilder::default().indexing_threshold(20000),
+                    ),
+            )
             .await?;
 
         tracing::info!(collection = COLLECTION_NAME, "created collection");
-
         Ok(())
     }
 }

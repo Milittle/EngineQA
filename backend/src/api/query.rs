@@ -1,11 +1,18 @@
-use axum::{extract::State, Json};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
     api::{error_code::ErrorCode, error_mapping},
     provider::{ChatMessage, InferenceProvider},
     rag::RetrievedChunk,
+    AppState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -50,23 +57,22 @@ pub struct QueryResponse {
 
 #[derive(Debug, thiserror::Error)]
 pub enum QueryError {
-    #[error("Embedding error: {0}")]
-    EmbeddingError(#[from] crate::provider::ProviderError),
-
+    #[error("Provider error: {0}")]
+    ProviderError(#[from] crate::provider::ProviderError),
     #[error("Retrieval error: {0}")]
     RetrievalError(#[from] crate::rag::RetrieverError),
-
-    #[error("Chat error: {0}")]
-    ChatError(#[from] crate::provider::ProviderError),
-
-    #[error("No relevant chunks found")]
-    NoRelevantChunks,
 
     #[error("Internal error: {0}")]
     InternalError(String),
 }
 
 pub type QueryResult<T> = Result<T, QueryError>;
+
+impl IntoResponse for QueryError {
+    fn into_response(self) -> Response {
+        (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+    }
+}
 
 const CHAT_TEMPERATURE: f32 = 0.2;
 const MAX_TOKENS: u32 = 512;
@@ -104,14 +110,10 @@ const SYSTEM_PROMPT: &str = r#"
 - [来源2的标题]
 "#;
 
-pub async fn handle_query<P>(
-    provider: State<P>,
-    retriever: State<crate::rag::VectorRetriever>,
+pub async fn handle_query(
+    State(state): State<Arc<AppState>>,
     req: Json<QueryRequest>,
-) -> QueryResult<Json<QueryResponse>>
-where
-    P: InferenceProvider + Send + Sync + 'static,
-{
+) -> QueryResult<Json<QueryResponse>> {
     let trace_id = Uuid::new_v4().to_string();
     let question = &req.question;
 
@@ -123,7 +125,7 @@ where
     );
 
     // Step 1: Embed query
-    let query_vector = match provider.embed(question).await {
+    let query_vector = match state.provider.embed(question).await {
         Ok(vec) => vec,
         Err(e) => {
             let error_code = error_mapping::map_provider_error(&e);
@@ -138,7 +140,7 @@ where
     };
 
     // Step 2: Retrieve relevant chunks
-    let retrieved_chunks = retriever.retrieve(query_vector, Some(req.top_k)).await;
+    let retrieved_chunks = state.retriever.retrieve(query_vector, Some(req.top_k)).await;
 
     let chunks = match retrieved_chunks {
         Ok(chunks) if !chunks.is_empty() => chunks,
@@ -163,7 +165,11 @@ where
     // Step 4: Generate answer using chat
     let messages = build_messages(question, &context);
 
-    let answer = match provider.chat(messages, CHAT_TEMPERATURE, MAX_TOKENS).await {
+    let answer = match state
+        .provider
+        .chat(messages, CHAT_TEMPERATURE, MAX_TOKENS)
+        .await
+    {
         Ok(answer) => answer,
         Err(e) => {
             let error_code = error_mapping::map_provider_error(&e);
@@ -214,6 +220,7 @@ fn build_context(chunks: &[RetrievedChunk]) -> String {
                 "[来源{}] {}\n路径: {}\n内容: {}\n",
                 i + 1,
                 chunk.metadata.title_path,
+                chunk.metadata.path,
                 chunk.snippet
             )
         })

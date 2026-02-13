@@ -5,12 +5,15 @@ pub mod query;
 pub mod reindex;
 pub mod status;
 
-use axum::{Json, Router, routing::get, routing::post};
+use axum::{Json, Router, routing::get};
 use serde::Serialize;
 
 use crate::config::AppConfig;
 
-pub fn router(config: &AppConfig) -> Router {
+pub fn router<S>(_config: &AppConfig) -> Router<S>
+where
+    S: Clone + Send + Sync + 'static,
+{
     Router::new().route("/health", get(health))
 }
 
@@ -29,6 +32,7 @@ mod tests {
         body::Body,
         http::{Request, StatusCode},
     };
+    use std::collections::HashMap;
     use tower::ServiceExt;
 
     use crate::api;
@@ -36,7 +40,15 @@ mod tests {
 
     #[tokio::test]
     async fn health_returns_200() {
-        let app = api::router(&AppConfig::from_env().expect("Config should load"));
+        let vars = HashMap::from([
+            (
+                "INTERNAL_API_BASE_URL".to_string(),
+                "https://internal-api.example.com".to_string(),
+            ),
+            ("INTERNAL_API_TOKEN".to_string(), "token-value".to_string()),
+        ]);
+        let config = AppConfig::from_map(&vars).expect("config should load");
+        let app = api::router::<()>(&config);
         let response = app
             .oneshot(
                 Request::builder()

@@ -1,9 +1,16 @@
-use axum::{extract::State, Json};
+use axum::{
+    Json,
+    extract::State,
+    http::StatusCode,
+    response::{IntoResponse, Response},
+};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use uuid::Uuid;
+
+use crate::AppState;
 
 /// 反馈评分
 #[derive(Debug, Clone, Copy, Deserialize, Serialize)]
@@ -133,9 +140,22 @@ pub enum FeedbackError {
     InvalidInput(String),
 }
 
+impl IntoResponse for FeedbackError {
+    fn into_response(self) -> Response {
+        match self {
+            FeedbackError::InvalidInput(_) => {
+                (StatusCode::BAD_REQUEST, self.to_string()).into_response()
+            }
+            FeedbackError::StorageError(_) => {
+                (StatusCode::INTERNAL_SERVER_ERROR, self.to_string()).into_response()
+            }
+        }
+    }
+}
+
 /// 处理 /api/feedback POST 请求
 pub async fn handle_feedback(
-    store: State<FeedbackStore>,
+    State(state): State<Arc<AppState>>,
     req: Json<FeedbackRequest>,
 ) -> Result<Json<FeedbackResponse>, FeedbackError> {
     tracing::info!(
@@ -158,7 +178,7 @@ pub async fn handle_feedback(
     }
 
     // 保存反馈
-    let record = store.save(req.0).await?;
+    let record = state.feedback_store.save(req.0).await?;
 
     Ok(Json(FeedbackResponse {
         ok: true,
