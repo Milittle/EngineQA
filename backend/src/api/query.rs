@@ -9,10 +9,10 @@ use std::sync::Arc;
 use uuid::Uuid;
 
 use crate::{
+    AppState,
     api::{error_code::ErrorCode, error_mapping},
     provider::{ChatMessage, InferenceProvider},
     rag::RetrievedChunk,
-    AppState,
 };
 
 #[derive(Debug, Deserialize)]
@@ -75,7 +75,7 @@ impl IntoResponse for QueryError {
 }
 
 const CHAT_TEMPERATURE: f32 = 0.2;
-const MAX_TOKENS: u32 = 512;
+const MAX_TOKENS: u32 = 65535;
 
 const SYSTEM_PROMPT: &str = r#"
 你是一个广告引擎维优专家的智能助手。
@@ -140,7 +140,10 @@ pub async fn handle_query(
     };
 
     // Step 2: Retrieve relevant chunks
-    let retrieved_chunks = state.retriever.retrieve(query_vector, Some(req.top_k)).await;
+    let retrieved_chunks = state
+        .retriever
+        .retrieve(query_vector, Some(req.top_k))
+        .await;
 
     let chunks = match retrieved_chunks {
         Ok(chunks) if !chunks.is_empty() => chunks,
@@ -181,14 +184,11 @@ pub async fn handle_query(
             );
 
             // 如果是上游错误且应该降级，返回检索到的片段
-            let sources: Vec<QuerySource> =
-                chunks.into_iter().map(QuerySource::from).collect();
+            let sources: Vec<QuerySource> = chunks.into_iter().map(QuerySource::from).collect();
 
             if error_mapping::should_degrade(error_code) {
                 return Ok(build_degraded_with_sources_response(
-                    &trace_id,
-                    error_code,
-                    sources,
+                    &trace_id, error_code, sources,
                 ));
             } else {
                 return Ok(build_degraded_response(&trace_id, error_code, vec![]));
@@ -236,10 +236,7 @@ fn build_messages(question: &str, context: &str) -> Vec<ChatMessage> {
         },
         ChatMessage {
             role: "user".to_string(),
-            content: format!(
-                "问题: {}\n\n参考资料:\n{}",
-                question, context
-            ),
+            content: format!("问题: {}\n\n参考资料:\n{}", question, context),
         },
     ]
 }
@@ -254,7 +251,11 @@ fn build_no_match_response(trace_id: &str) -> Json<QueryResponse> {
     })
 }
 
-fn build_degraded_response(trace_id: &str, error_code: ErrorCode, sources: Vec<QuerySource>) -> Json<QueryResponse> {
+fn build_degraded_response(
+    trace_id: &str,
+    error_code: ErrorCode,
+    sources: Vec<QuerySource>,
+) -> Json<QueryResponse> {
     let description = error_mapping::get_error_description(error_code);
 
     Json(QueryResponse {
@@ -266,7 +267,11 @@ fn build_degraded_response(trace_id: &str, error_code: ErrorCode, sources: Vec<Q
     })
 }
 
-fn build_degraded_with_sources_response(trace_id: &str, error_code: ErrorCode, sources: Vec<QuerySource>) -> Json<QueryResponse> {
+fn build_degraded_with_sources_response(
+    trace_id: &str,
+    error_code: ErrorCode,
+    sources: Vec<QuerySource>,
+) -> Json<QueryResponse> {
     let description = error_mapping::get_error_description(error_code);
     let sources_text = if sources.is_empty() {
         "没有找到相关的参考文档。".to_string()
@@ -282,7 +287,10 @@ fn build_degraded_with_sources_response(trace_id: &str, error_code: ErrorCode, s
     };
 
     Json(QueryResponse {
-        answer: format!("AI 生成服务暂时不可用：{}。\n\n{}", description, sources_text),
+        answer: format!(
+            "AI 生成服务暂时不可用：{}。\n\n{}",
+            description, sources_text
+        ),
         sources,
         degraded: true,
         error_code: Some(error_code.to_string()),

@@ -1,13 +1,7 @@
 use crate::{
     config::InternalApiConfig,
     provider::{InferenceProvider, InternalApiProvider, ProviderError},
-};
-use qdrant_client::{
-    qdrant::{
-        Condition, DeletePointsBuilder, Filter, PointStruct, ScrollPointsBuilder,
-        UpsertPointsBuilder, Value,
-    },
-    Payload, Qdrant,
+    vector_store::{StoredChunk, VectorStore, VectorStoreError},
 };
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -18,12 +12,10 @@ use std::{
     sync::Arc,
     time::Instant,
 };
-use tokio::sync::{AcquireError, Semaphore};
 use tracing::{debug, error, info, warn};
 
 const DEFAULT_CHUNK_SIZE: usize = 1000; // 中文字符数
 const DEFAULT_OVERLAP: usize = 125; // 中文字符数
-const MAX_CONCURRENT_EMBEDDINGS: usize = 8;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct IndexResult {
@@ -39,16 +31,9 @@ pub struct IndexResult {
 }
 
 #[derive(Debug, Clone)]
-struct FileMetadata {
-    pub doc_id: String,
-    pub path: String,
-    pub hash: String,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-}
-
-#[derive(Debug, Clone)]
 struct Chunk {
     pub doc_id: String,
+    pub chunk_id: String,
     pub path: String,
     pub title_path: String,
     pub section: String,
@@ -64,14 +49,11 @@ pub enum IndexerError {
     #[error("Provider error: {0}")]
     ProviderError(#[from] ProviderError),
 
-    #[error("Qdrant error: {0}")]
-    QdrantError(#[from] qdrant_client::QdrantError),
+    #[error("Vector store error: {0}")]
+    VectorStoreError(#[from] VectorStoreError),
 
     #[error("Serialization error: {0}")]
     SerializationError(#[from] serde_json::Error),
-
-    #[error("Semaphore acquisition error: {0}")]
-    AcquireError(#[from] AcquireError),
 
     #[error("Markdown parsing error: {0}")]
     ParseError(String),
@@ -81,7 +63,7 @@ pub type IndexerResult<T> = Result<T, IndexerError>;
 
 pub struct MarkdownIndexer {
     provider: InternalApiProvider,
-    qdrant: Qdrant,
+    vector_store: Arc<dyn VectorStore>,
     knowledge_dir: PathBuf,
     chunk_size: usize,
     overlap: usize,
@@ -90,26 +72,25 @@ pub struct MarkdownIndexer {
 impl MarkdownIndexer {
     pub fn new(
         config: InternalApiConfig,
-        qdrant_url: &str,
+        vector_store: Arc<dyn VectorStore>,
         knowledge_dir: &str,
     ) -> IndexerResult<Self> {
         let provider = InternalApiProvider::new(config.clone());
-        let qdrant = Qdrant::from_url(qdrant_url).build()?;
         let knowledge_dir = PathBuf::from(knowledge_dir);
 
         Ok(Self {
             provider,
-            qdrant,
+            vector_store,
             knowledge_dir,
             chunk_size: DEFAULT_CHUNK_SIZE,
             overlap: DEFAULT_OVERLAP,
         })
     }
 
-    pub async fn index(&self) -> IndexerResult<IndexResult> {
+    pub async fn index(&self, full_rebuild: bool) -> IndexerResult<IndexResult> {
         let start = Instant::now();
 
-        info!("starting markdown indexing");
+        info!(full_rebuild, "starting markdown indexing");
 
         // Step 1: Scan all markdown files
         let md_files = self.scan_markdown_files().await?;
@@ -129,11 +110,15 @@ impl MarkdownIndexer {
             });
         }
 
-        // Step 2: Get existing file metadata from Qdrant
-        let existing_files = self.get_existing_files().await?;
+        // Step 2: Inspect existing metadata from vector store
+        let existing_files = self.vector_store.list_doc_hashes().await?;
 
         // Step 3: Determine which files need processing
-        let files_to_index = self.determine_files_to_index(&md_files, &existing_files)?;
+        let files_to_index = if full_rebuild {
+            md_files.clone()
+        } else {
+            self.determine_files_to_index(&md_files, &existing_files)
+        };
         let indexed_files = files_to_index.len();
 
         info!(
@@ -148,33 +133,24 @@ impl MarkdownIndexer {
         let mut failed_chunks = 0usize;
         let mut failed_files = 0usize;
 
-        let semaphore = Arc::new(Semaphore::new(MAX_CONCURRENT_EMBEDDINGS));
-
-        for file_result in files_to_index {
-            match file_result {
-                Ok((path, hash)) => {
-                    let permit = semaphore.clone().acquire_owned().await?;
-                    match self.process_file(&path, &hash).await {
-                        Ok(chunks_count) => {
-                            total_chunks += chunks_count.0 + chunks_count.1;
-                            successful_chunks += chunks_count.0;
-                            failed_chunks += chunks_count.1;
-                        }
-                        Err(e) => {
-                            error!(file = %path.to_string_lossy(), error = %e, "failed to process file");
-                            failed_files += 1;
-                        }
-                    }
-                    drop(permit);
+        for (path, hash) in files_to_index {
+            match self.process_file(&path, &hash).await {
+                Ok((successful, failed, total)) => {
+                    total_chunks += total;
+                    successful_chunks += successful;
+                    failed_chunks += failed;
                 }
                 Err(e) => {
-                    error!(error = %e, "failed to determine file status");
+                    error!(file = %path.to_string_lossy(), error = %e, "failed to process file");
+                    failed_files += 1;
                 }
             }
         }
 
         // Step 5: Delete chunks from files that no longer exist
-        let deleted_chunks = self.delete_obsolete_chunks(&md_files).await?;
+        let deleted_chunks = self
+            .delete_obsolete_chunks(existing_files.keys().cloned().collect(), &md_files)
+            .await?;
 
         let duration_ms = start.elapsed().as_millis();
 
@@ -205,7 +181,10 @@ impl MarkdownIndexer {
         let mut files = Vec::new();
 
         if !self.knowledge_dir.exists() {
-            warn!("knowledge directory does not exist: {:?}", self.knowledge_dir);
+            warn!(
+                "knowledge directory does not exist: {:?}",
+                self.knowledge_dir
+            );
             return Ok(files);
         }
 
@@ -215,7 +194,7 @@ impl MarkdownIndexer {
             let entry = entry?;
             let path = entry.path();
 
-            if path.is_file() && path.extension().map_or(false, |ext| ext == "md") {
+            if path.is_file() && path.extension().is_some_and(|ext| ext == "md") {
                 let content = fs::read_to_string(&path)?;
                 let hash = compute_hash(&content);
                 files.push((path, hash));
@@ -227,44 +206,11 @@ impl MarkdownIndexer {
         Ok(files)
     }
 
-    async fn get_existing_files(&self) -> IndexerResult<HashMap<String, FileMetadata>> {
-        let collection_name = "knowledge_chunks";
-
-        let scroll_result = self
-            .qdrant
-            .scroll(
-                ScrollPointsBuilder::new(collection_name)
-                    .limit(10000)
-                    .with_payload(true),
-            )
-            .await?;
-
-        let mut files_map = HashMap::new();
-
-        for point in scroll_result.result {
-            if let Some(doc_id) = extract_payload_string(&point.payload, "doc_id") {
-                if let Some(path) = extract_payload_string(&point.payload, "path") {
-                    if let Some(hash) = extract_payload_string(&point.payload, "hash") {
-                        let metadata = FileMetadata {
-                            doc_id,
-                            path,
-                            hash,
-                            updated_at: chrono::Utc::now(),
-                        };
-                        files_map.insert(metadata.doc_id.clone(), metadata);
-                    }
-                }
-            }
-        }
-
-        Ok(files_map)
-    }
-
     fn determine_files_to_index(
         &self,
         md_files: &[(PathBuf, String)],
-        existing_files: &HashMap<String, FileMetadata>,
-    ) -> IndexerResult<Vec<Result<(PathBuf, String), IndexerError>>> {
+        existing_files: &HashMap<String, String>,
+    ) -> Vec<(PathBuf, String)> {
         let mut files_to_index = Vec::new();
 
         for (path, hash) in md_files {
@@ -276,23 +222,23 @@ impl MarkdownIndexer {
 
             let doc_id = compute_doc_id(&relative_path);
 
-            if let Some(existing) = existing_files.get(&doc_id) {
-                if existing.hash != *hash {
+            if let Some(existing_hash) = existing_files.get(&doc_id) {
+                if existing_hash != hash {
                     debug!(file = %relative_path, "file changed, re-indexing");
-                    files_to_index.push(Ok((path.clone(), hash.clone())));
+                    files_to_index.push((path.clone(), hash.clone()));
                 } else {
                     debug!(file = %relative_path, "file unchanged, skipping");
                 }
             } else {
                 debug!(file = %relative_path, "new file, indexing");
-                files_to_index.push(Ok((path.clone(), hash.clone())));
+                files_to_index.push((path.clone(), hash.clone()));
             }
         }
 
-        Ok(files_to_index)
+        files_to_index
     }
 
-    async fn process_file(&self, path: &Path, _hash: &str) -> IndexerResult<(usize, usize)> {
+    async fn process_file(&self, path: &Path, _hash: &str) -> IndexerResult<(usize, usize, usize)> {
         let content = fs::read_to_string(path)?;
         let relative_path = path
             .strip_prefix(&self.knowledge_dir)
@@ -302,19 +248,32 @@ impl MarkdownIndexer {
         let doc_id = compute_doc_id(&relative_path);
 
         // First, delete all existing chunks for this file
-        self.delete_file_chunks(&doc_id).await?;
+        self.vector_store.delete_by_doc_id(&doc_id).await?;
 
         // Parse and chunk the markdown
         let chunks = self.parse_and_chunk(&content, &relative_path, &doc_id)?;
+        let total_chunks = chunks.len();
 
-        // Embed and upsert chunks
-        let mut successful = 0;
-        let mut failed = 0;
+        // Embed then batch-upsert
+        let mut records = Vec::new();
+        let mut failed = 0usize;
 
         for chunk in chunks {
-            let doc_id = chunk.doc_id.clone();
-            match self.embed_and_upsert(&chunk).await {
-                Ok(_) => successful += 1,
+            match self.provider.embed(&chunk.text).await {
+                Ok(vector) => {
+                    let point_id = format!("{}|{}|{}", chunk.doc_id, chunk.chunk_id, chunk.hash);
+                    records.push(StoredChunk {
+                        point_id,
+                        doc_id: chunk.doc_id,
+                        chunk_id: chunk.chunk_id,
+                        path: chunk.path,
+                        title_path: chunk.title_path,
+                        section: chunk.section,
+                        text: chunk.text,
+                        hash: chunk.hash,
+                        vector,
+                    });
+                }
                 Err(e) => {
                     error!(doc_id = %doc_id, error = %e, "failed to embed chunk");
                     failed += 1;
@@ -322,7 +281,12 @@ impl MarkdownIndexer {
             }
         }
 
-        Ok((successful, failed))
+        if !records.is_empty() {
+            self.vector_store.upsert_chunks(records).await?;
+        }
+
+        let successful = total_chunks - failed;
+        Ok((successful, failed, total_chunks))
     }
 
     fn parse_and_chunk(
@@ -341,33 +305,28 @@ impl MarkdownIndexer {
         for line in &lines {
             let trimmed = line.trim();
 
-            // Check for headings
             if trimmed.starts_with('#') {
-                // Save previous chunk if buffer has content
                 if !buffer.trim().is_empty() {
                     let text = buffer.trim().to_string();
-                    if !text.is_empty() {
-                        let hash = compute_hash(&text);
-                        chunks.push(Chunk {
-                            doc_id: doc_id.to_string(),
-                            path: path.to_string(),
-                            title_path: current_title_path.clone(),
-                            section: current_section.clone(),
-                            text,
-                            hash,
-                        });
-                    }
+                    let hash = compute_hash(&text);
+                    chunks.push(Chunk {
+                        doc_id: doc_id.to_string(),
+                        chunk_id: String::new(),
+                        path: path.to_string(),
+                        title_path: current_title_path.clone(),
+                        section: current_section.clone(),
+                        text,
+                        hash,
+                    });
                 }
 
                 buffer.clear();
 
-                // Parse heading level
                 let heading_level = trimmed.chars().take_while(|&c| c == '#').count();
                 let heading_text = trimmed[heading_level..].trim().to_string();
 
                 current_section = heading_text.clone();
 
-                // Update title path based on heading level
                 if heading_level == 1 {
                     current_title_path = heading_text;
                 } else if heading_level == 2 {
@@ -385,26 +344,21 @@ impl MarkdownIndexer {
             }
         }
 
-        // Don't forget the last chunk
         if !buffer.trim().is_empty() {
             let text = buffer.trim().to_string();
-            if !text.is_empty() {
-                let hash = compute_hash(&text);
-                chunks.push(Chunk {
-                    doc_id: doc_id.to_string(),
-                    path: path.to_string(),
-                    title_path: current_title_path,
-                    section: current_section,
-                    text,
-                    hash,
-                });
-            }
+            let hash = compute_hash(&text);
+            chunks.push(Chunk {
+                doc_id: doc_id.to_string(),
+                chunk_id: String::new(),
+                path: path.to_string(),
+                title_path: current_title_path,
+                section: current_section,
+                text,
+                hash,
+            });
         }
 
-        // Now split into overlapping chunks
-        let overlapped_chunks = self.create_overlapping_chunks(chunks)?;
-
-        Ok(overlapped_chunks)
+        self.create_overlapping_chunks(chunks)
     }
 
     fn create_overlapping_chunks(&self, chunks: Vec<Chunk>) -> IndexerResult<Vec<Chunk>> {
@@ -415,11 +369,13 @@ impl MarkdownIndexer {
             let total_chars = chars.len();
 
             if total_chars <= self.chunk_size {
-                result.push(chunk);
+                result.push(Chunk {
+                    chunk_id: format!("{}_chunk_0", chunk.doc_id),
+                    ..chunk
+                });
                 continue;
             }
 
-            // Create overlapping chunks
             let mut start = 0;
             let mut chunk_num = 0;
 
@@ -429,13 +385,18 @@ impl MarkdownIndexer {
                 let hash = compute_hash(&chunk_text);
 
                 result.push(Chunk {
-                    doc_id: format!("{}_chunk_{}", chunk.doc_id, chunk_num),
+                    doc_id: chunk.doc_id.clone(),
+                    chunk_id: format!("{}_chunk_{}", chunk.doc_id, chunk_num),
                     path: chunk.path.clone(),
                     title_path: chunk.title_path.clone(),
                     section: chunk.section.clone(),
                     text: chunk_text,
                     hash,
                 });
+
+                if end == total_chars {
+                    break;
+                }
 
                 start += self.chunk_size - self.overlap;
                 chunk_num += 1;
@@ -445,57 +406,11 @@ impl MarkdownIndexer {
         Ok(result)
     }
 
-    async fn embed_and_upsert(&self, chunk: &Chunk) -> IndexerResult<()> {
-        let vector = self.provider.embed(&chunk.text).await?;
-
-        let point_id = format!("{}|{}", chunk.doc_id, chunk.hash);
-
-        let mut payload = HashMap::new();
-        payload.insert("doc_id".to_string(), Value::from(chunk.doc_id.clone()));
-        payload.insert("path".to_string(), Value::from(chunk.path.clone()));
-        payload.insert(
-            "title_path".to_string(),
-            Value::from(chunk.title_path.clone()),
-        );
-        payload.insert("section".to_string(), Value::from(chunk.section.clone()));
-        payload.insert("text".to_string(), Value::from(chunk.text.clone()));
-        payload.insert("hash".to_string(), Value::from(chunk.hash.clone()));
-
-        let point = PointStruct::new(
-            point_id,
-            vector,
-            Payload::from(payload),
-        );
-
-        self.qdrant
-            .upsert_points(
-                UpsertPointsBuilder::new("knowledge_chunks", vec![point]).wait(true),
-            )
-            .await?;
-
-        Ok(())
-    }
-
-    async fn delete_file_chunks(&self, doc_id: &str) -> IndexerResult<()> {
-        let filter = Filter::must([Condition::matches("doc_id", doc_id.to_string())]);
-
-        self.qdrant
-            .delete_points(
-                DeletePointsBuilder::new("knowledge_chunks")
-                    .points(filter)
-                    .wait(true),
-            )
-            .await?;
-
-        Ok(())
-    }
-
     async fn delete_obsolete_chunks(
         &self,
+        existing_doc_ids: HashSet<String>,
         current_files: &[(PathBuf, String)],
     ) -> IndexerResult<usize> {
-        let existing_files = self.get_existing_files().await?;
-
         let current_doc_ids: HashSet<String> = current_files
             .iter()
             .map(|(path, _)| {
@@ -510,9 +425,9 @@ impl MarkdownIndexer {
 
         let mut deleted_count = 0usize;
 
-        for doc_id in existing_files.keys() {
-            if !current_doc_ids.contains(doc_id) {
-                self.delete_file_chunks(doc_id).await?;
+        for doc_id in existing_doc_ids {
+            if !current_doc_ids.contains(&doc_id) {
+                self.vector_store.delete_by_doc_id(&doc_id).await?;
                 deleted_count += 1;
             }
         }
@@ -529,11 +444,4 @@ fn compute_hash(content: &str) -> String {
 
 fn compute_doc_id(path: &str) -> String {
     path.replace('/', "_").replace('\\', "_")
-}
-
-fn extract_payload_string(
-    payload: &HashMap<String, Value>,
-    key: &str,
-) -> Option<String> {
-    payload.get(key).and_then(|v| v.as_str().cloned())
 }

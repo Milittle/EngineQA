@@ -134,7 +134,7 @@ run_test "Feedback endpoint accepts feedback" \
     "curl -s -X POST '$API_URL/api/feedback' -H 'Content-Type: application/json' -d '{\"question\": \"test\", \"answer\": \"test\", \"rating\": \"useful\", \"trace_id\": \"test-123\"}' | grep -q 'ok'"
 
 run_test "Reindex endpoint returns job_id" \
-    "curl -s -X POST '$API_URL/api/reindex' -H 'Content-Type: application/json' -d '{}' | grep -q 'job_id'"
+    "curl -s -X POST '$API_URL/api/reindex' -H 'Content-Type: application/json' -d '{\"full\": true}' | grep -q 'job_id'"
 
 # Error handling tests
 echo "========================================="

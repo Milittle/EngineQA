@@ -79,7 +79,7 @@ echo ""
 echo "Test 5: Reindex endpoint"
 REINDEX_CHECK=$(curl -s -X POST http://localhost:8080/api/reindex \
     -H "Content-Type: application/json" \
-    -d '{}')
+    -d '{"full": true}')
 if [[ $REINDEX_CHECK == *"job_id"* ]]; then
     print_green "Reindex endpoint passed"
 else
@@ -119,13 +119,14 @@ else
 fi
 echo ""
 
-# Test 9: Qdrant connection
-echo "Test 9: Qdrant connection"
-QDRANT_CHECK=$(curl -s http://localhost:6333/health)
-if [[ $QDRANT_CHECK == *"ok"* ]]; then
-    print_green "Qdrant connection passed"
+# Test 9: Vector store connectivity (status-based)
+echo "Test 9: Vector store connectivity"
+if [[ $STATUS_CHECK == *'"vector_store_connected":true'* ]]; then
+    print_green "Vector store connectivity passed (Rust/LanceDB path)"
+elif [[ $STATUS_CHECK == *'"qdrant_connected":true'* ]]; then
+    print_green "Vector store connectivity passed (Python/Qdrant path)"
 else
-    print_yellow "Qdrant not accessible (this is OK if Qdrant is not running)"
+    print_yellow "Vector store connectivity field not healthy"
 fi
 echo ""
 

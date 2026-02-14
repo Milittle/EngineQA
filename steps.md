@@ -1,9 +1,9 @@
 # EngineQA 模块化交付步骤（steps.md）
 
-## 文档状态说明（2026-02-13）
+## 文档状态说明（2026-02-14）
 - 当前可运行基线为 Python 后端（`backend-python/`）。
-- Rust 后端当前有已知运行问题，暂不作为验收路径。
-- 本文档保留原始分步规划语义；实际运行流程以 `README.md` 和 `docs/startup-manual.md` 为准。
+- Rust 后端已完成向量存储重构，向量层使用 LanceDB。
+- 实际运行流程以 `README.md` 和 `docs/startup-manual.md` 为准。
 
 ## 1. 执行原则（保证可快速验证与小步迭代）
 - 每个 Step 只交付一个主模块能力，避免跨模块大改。
@@ -28,16 +28,16 @@
 - 模块：
   - `frontend`（React + Vite + Tailwind）
   - `backend`（axum 基础服务）
-  - `deploy`（`docker-compose` 启动 qdrant）
+  - `deploy`（主机运行脚本与配置模板）
 - 交付物：
   - 目录结构、启动脚本、`.env.example`
   - 基础 README（启动方式与端口约定）
 - 快速验证：
   - 前端页面可访问
   - 后端 `/health` 返回 200
-  - qdrant 容器 healthy
+  - 向量存储配置可被正确加载（Python/Qdrant 或 Rust/LanceDB）
 - 建议 Commit：
-  - `feat(step-01): bootstrap frontend backend and qdrant runtime`
+  - `feat(step-01): bootstrap frontend backend and vector store runtime`
 
 ### Step-02：配置中心与启动 fail-fast
 - 目标：完成配置加载与必填项校验，避免运行中才暴露配置错误。
@@ -67,19 +67,19 @@
 - 建议 Commit：
   - `feat(step-03): implement internal api provider with retries and timeout`
 
-### Step-04：Qdrant 检索模块
+### Step-04：LanceDB 检索模块
 - 目标：实现向量检索与来源元数据返回。
 - 模块：
   - `backend/rag/retriever`
 - 交付物：
-  - `knowledge_chunks` collection 访问封装
+  - `knowledge_chunks` table 访问封装
   - `top_k` 检索 + `score >= 0.3` 过滤
   - 返回 `title/path/snippet/score` 所需字段
 - 快速验证：
   - 写入测试向量后可查询到预期 chunk
   - 低分结果会被过滤
 - 建议 Commit：
-  - `feat(step-04): add qdrant retrieval with score threshold filtering`
+  - `feat(step-04): add lancedb retrieval with score threshold filtering`
 
 ### Step-05：`/api/query` 最小可用 RAG 链路
 - 目标：上线核心问答接口，先实现“可回答、可引用、可降级”。
@@ -87,7 +87,7 @@
   - `backend/api/query`
   - `backend/rag`
 - 交付物：
-  - 流程：query embedding -> qdrant 检索 -> context 组装 -> chat 生成
+  - 流程：query embedding -> lancedb 检索 -> context 组装 -> chat 生成
   - 返回：`answer/sources/degraded/error_code/trace_id`
   - 无命中时返回“不确定”，避免编造
 - 快速验证：
@@ -124,7 +124,7 @@
   - 首次全量建索引成功
   - 修改单个 md 后仅增量更新对应文档
 - 建议 Commit：
-  - `feat(step-07): build incremental markdown indexer for qdrant`
+  - `feat(step-07): build incremental markdown indexer for lancedb`
 
 ### Step-08：`/api/reindex` 与索引任务状态
 - 目标：提供可运维的索引触发入口与结果可见性。
@@ -132,7 +132,7 @@
   - `backend/api/reindex`
   - `backend/indexer/job_state`
 - 交付物：
-  - `POST /api/reindex` 触发任务
+  - `POST /api/reindex` 触发任务（支持 `full=true/false`）
   - 返回任务结果：成功数/失败数/耗时/时间戳
 - 快速验证：
   - 调用接口后能触发并观察到任务完成状态
@@ -217,7 +217,7 @@
   - `deploy/`
   - `docs/runbook.md`
 - 交付物：
-  - 单机/VM 部署说明（frontend/backend/qdrant/nginx 可选）
+  - 单机/VM 部署说明（frontend/backend/lancedb/nginx 可选）
   - 灰度策略、回滚策略、常见故障排查
 - 快速验证：
   - 新机器按文档可在 30 分钟内完成部署

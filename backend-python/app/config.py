@@ -45,6 +45,7 @@ class InternalApiConfig:
     embed_path: str
     chat_model: str
     embed_model: str
+    embedding_vector_size: int
     llm_timeout_ms: int
     embed_timeout_ms: int
     outbound_max_concurrency: int
@@ -109,6 +110,7 @@ class AppConfig:
             chat_burst=_int_env("CHAT_BURST", 10),
             retry_chat_max=_int_env("RETRY_CHAT_MAX", 1),
             retry_embed_max=_int_env("RETRY_EMBED_MAX", 3),
+            embedding_vector_size=_int_env("EMBEDDING_VECTOR_SIZE", 1536),
         )
 
         return cls(

@@ -90,12 +90,7 @@ impl InternalApiProvider {
         Self { config, client }
     }
 
-    async fn do_request<R, S>(
-        &self,
-        path: &str,
-        request: &R,
-        timeout_ms: u64,
-    ) -> ProviderResult<S>
+    async fn do_request<R, S>(&self, path: &str, request: &R, timeout_ms: u64) -> ProviderResult<S>
     where
         R: Serialize + ?Sized,
         S: for<'de> Deserialize<'de>,
@@ -119,7 +114,10 @@ impl InternalApiProvider {
         if status.is_success() {
             response.json().await.map_err(ProviderError::from)
         } else {
-            let error_text = response.text().await.unwrap_or_else(|_| "unknown error".to_string());
+            let error_text = response
+                .text()
+                .await
+                .unwrap_or_else(|_| "unknown error".to_string());
             Err(ProviderError::ApiError {
                 status,
                 message: error_text,
@@ -158,7 +156,10 @@ impl InternalApiProvider {
         let max_retries = self.config.retry_chat_max as usize;
 
         for attempt in 0..=max_retries {
-            match self.chat_once(messages.clone(), temperature, max_tokens).await {
+            match self
+                .chat_once(messages.clone(), temperature, max_tokens)
+                .await
+            {
                 Ok(result) => return Ok(result),
                 Err(e) if attempt < max_retries => {
                     tracing::warn!(
@@ -194,11 +195,9 @@ impl InternalApiProvider {
             .data
             .first()
             .map(|data| data.embedding.clone())
-            .ok_or_else(|| {
-                ProviderError::ApiError {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    message: "No embedding data returned".to_string(),
-                }
+            .ok_or_else(|| ProviderError::ApiError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: "No embedding data returned".to_string(),
             })
     }
 
@@ -223,11 +222,9 @@ impl InternalApiProvider {
             .choices
             .first()
             .map(|choice| choice.message.content.clone())
-            .ok_or_else(|| {
-                ProviderError::ApiError {
-                    status: StatusCode::UNPROCESSABLE_ENTITY,
-                    message: "No chat response returned".to_string(),
-                }
+            .ok_or_else(|| ProviderError::ApiError {
+                status: StatusCode::UNPROCESSABLE_ENTITY,
+                message: "No chat response returned".to_string(),
             })
     }
 }
@@ -244,6 +241,7 @@ impl InferenceProvider for InternalApiProvider {
         temperature: f32,
         max_tokens: u32,
     ) -> ProviderResult<String> {
-        self.chat_with_retry(messages, temperature, max_tokens).await
+        self.chat_with_retry(messages, temperature, max_tokens)
+            .await
     }
 }

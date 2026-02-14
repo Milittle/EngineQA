@@ -33,6 +33,7 @@ class InternalApiProvider:
         payload = {
             "model": self._config.embed_model,
             "input": text,
+            "dimensions": self._config.embedding_vector_size,
         }
         response = await self._post_json(
             operation="embed",
@@ -73,6 +74,15 @@ class InternalApiProvider:
             "max_tokens": max_tokens,
         }
 
+        logger.info(
+            "chat_request trace_id=%s model=%s temperature=%s max_tokens=%s messages_count=%s",
+            trace_id,
+            self._config.chat_model,
+            temperature,
+            max_tokens,
+            len(messages),
+        )
+
         response = await self._post_json(
             operation="chat",
             base_url=self._config.chat_base_url,
@@ -84,15 +94,68 @@ class InternalApiProvider:
             trace_id=trace_id,
         )
 
+        # Check for error field in response (APIs may return errors with 200 status)
+        if "error" in response:
+            error_info = response["error"]
+            error_msg = str(error_info) if not isinstance(error_info, dict) else error_info.get("message", str(error_info))
+            logger.warning(
+                "upstream_chat_response_error trace_id=%s error=%s",
+                trace_id,
+                error_msg,
+            )
+            raise ProviderError("api", f"upstream api error: {error_msg}")
+
         choices = response.get("choices")
         if not isinstance(choices, list) or not choices:
+            logger.warning(
+                "chat_parse_error trace_id=%s response_keys=%s response=%s",
+                trace_id,
+                list(response.keys()),
+                response,
+            )
             raise ProviderError("parse", "chat response missing choices")
 
         first = choices[0]
         message = first.get("message") if isinstance(first, dict) else None
         content = message.get("content") if isinstance(message, dict) else None
-        if not isinstance(content, str) or not content.strip():
-            raise ProviderError("parse", "chat response missing message content")
+
+        # Check content with specific error messages
+        if message is None:
+            logger.warning(
+                "chat_parse_error trace_id=%s first_keys=%s first=%r",
+                trace_id,
+                list(first.keys()) if isinstance(first, dict) else f"not_dict({type(first)})",
+                first,
+            )
+            raise ProviderError("parse", "chat response missing message field")
+        if not isinstance(message, dict):
+            logger.warning(
+                "chat_parse_error trace_id=%s message_type=%s message=%r",
+                trace_id,
+                type(message).__name__,
+                message,
+            )
+            raise ProviderError("parse", f"chat response message is not a dict: {type(message).__name__}")
+        if content is None:
+            logger.warning(
+                "chat_parse_error trace_id=%s message_keys=%s message=%r",
+                trace_id,
+                list(message.keys()),
+                message,
+            )
+            raise ProviderError("parse", "chat response missing content field")
+        if not isinstance(content, str):
+            raise ProviderError("parse", f"chat response content is not a string: {type(content).__name__}")
+        if not content.strip():
+            # Check for finish_reason which might explain why content is empty
+            finish_reason = first.get("finish_reason") if isinstance(first, dict) else None
+            logger.warning(
+                "chat_parse_error trace_id=%s content_empty=true finish_reason=%s message_keys=%s",
+                trace_id,
+                finish_reason,
+                list(message.keys()) if isinstance(message, dict) else "not_dict",
+            )
+            raise ProviderError("parse", "chat response content is empty or whitespace")
 
         return content.strip()
 

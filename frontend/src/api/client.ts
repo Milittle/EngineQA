@@ -9,17 +9,42 @@ import type {
   ReindexStatusResponse,
 } from './types';
 
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:8080';
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || '').trim();
 
 export class ApiClient {
   private baseUrl: string;
 
   constructor(baseUrl: string = API_BASE_URL) {
-    this.baseUrl = baseUrl;
+    this.baseUrl = baseUrl.replace(/\/+$/, '');
+  }
+
+  private buildUrl(path: string): string {
+    if (!this.baseUrl) {
+      return path;
+    }
+    if (path.startsWith('/')) {
+      return `${this.baseUrl}${path}`;
+    }
+    return `${this.baseUrl}/${path}`;
+  }
+
+  private async request(path: string, init?: RequestInit): Promise<Response> {
+    const url = this.buildUrl(path);
+
+    try {
+      return await fetch(url, init);
+    } catch (err) {
+      if (err instanceof TypeError) {
+        throw new Error(
+          `Network error: cannot reach backend at ${url}. Check backend process and VITE_API_BASE_URL.`
+        );
+      }
+      throw err;
+    }
   }
 
   async query(request: QueryRequest): Promise<QueryResponse> {
-    const response = await fetch(`${this.baseUrl}/api/query`, {
+    const response = await this.request('/api/query', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -38,7 +63,7 @@ export class ApiClient {
   }
 
   async feedback(request: FeedbackRequest): Promise<FeedbackResponse> {
-    const response = await fetch(`${this.baseUrl}/api/feedback`, {
+    const response = await this.request('/api/feedback', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -54,7 +79,7 @@ export class ApiClient {
   }
 
   async status(): Promise<StatusResponse> {
-    const response = await fetch(`${this.baseUrl}/api/status`);
+    const response = await this.request('/api/status');
 
     if (!response.ok) {
       throw new Error(`Status check failed: ${response.statusText}`);
@@ -64,7 +89,7 @@ export class ApiClient {
   }
 
   async reindex(): Promise<ReindexResponse> {
-    const response = await fetch(`${this.baseUrl}/api/reindex`, {
+    const response = await this.request('/api/reindex', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -80,7 +105,7 @@ export class ApiClient {
   }
 
   async reindexStatus(): Promise<ReindexStatusResponse> {
-    const response = await fetch(`${this.baseUrl}/api/reindex`);
+    const response = await this.request('/api/reindex');
 
     if (!response.ok) {
       throw new Error(`Reindex status check failed: ${response.statusText}`);
@@ -90,7 +115,7 @@ export class ApiClient {
   }
 
   async health(): Promise<{ status: string }> {
-    const response = await fetch(`${this.baseUrl}/health`);
+    const response = await this.request('/health');
 
     if (!response.ok) {
       throw new Error(`Health check failed: ${response.statusText}`);

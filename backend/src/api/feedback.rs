@@ -166,15 +166,21 @@ pub async fn handle_feedback(
 
     // 验证输入
     if req.question.trim().is_empty() {
-        return Err(FeedbackError::InvalidInput("Question cannot be empty".to_string()));
+        return Err(FeedbackError::InvalidInput(
+            "Question cannot be empty".to_string(),
+        ));
     }
 
     if req.answer.trim().is_empty() {
-        return Err(FeedbackError::InvalidInput("Answer cannot be empty".to_string()));
+        return Err(FeedbackError::InvalidInput(
+            "Answer cannot be empty".to_string(),
+        ));
     }
 
     if req.trace_id.trim().is_empty() {
-        return Err(FeedbackError::InvalidInput("Trace ID cannot be empty".to_string()));
+        return Err(FeedbackError::InvalidInput(
+            "Trace ID cannot be empty".to_string(),
+        ));
     }
 
     // 保存反馈

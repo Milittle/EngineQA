@@ -40,7 +40,7 @@ logger = logging.getLogger(__name__)
 
 
 CHAT_TEMPERATURE = 0.2
-MAX_TOKENS = 512
+MAX_TOKENS = 65535
 SYSTEM_PROMPT = """
 你是一个广告引擎维优专家的智能助手。
 

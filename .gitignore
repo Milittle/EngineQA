@@ -13,21 +13,12 @@ frontend/dist
 # Logs
 *.log
 
-# Local qdrant storage
-.qdrant-storage/
-
-# Local package caches (sandbox-friendly)
-.cargo_home/
-.npm/
-
 # Python artifacts
 __pycache__/
 *.pyc
 .venv-backend-python/
-backend-python/.venv/
 
 # Embedded qdrant local storage
 .qdrant-local/
 
-.qdrant-initialized
-backend-python/.pydeps/
+.lancedb/

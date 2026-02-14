@@ -4,6 +4,8 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_PORT="${APP_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
+LANCEDB_URI="${LANCEDB_URI:-./.lancedb}"
+LANCEDB_TABLE="${LANCEDB_TABLE:-knowledge_chunks}"
 
 if [[ ! -d "${ROOT_DIR}/frontend/node_modules" ]]; then
   echo "frontend dependencies are missing. run: npm install --prefix frontend"
@@ -33,6 +35,7 @@ backend_pid=$!
 frontend_pid=$!
 
 echo "backend(runtime=rust)  -> http://127.0.0.1:${BACKEND_PORT}/health"
+echo "vector store(lancedb)  -> uri=${LANCEDB_URI}, table=${LANCEDB_TABLE}"
 echo "frontend               -> http://127.0.0.1:${FRONTEND_PORT}"
 echo "press Ctrl+C to stop"
 

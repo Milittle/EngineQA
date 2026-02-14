@@ -1,9 +1,9 @@
 # 广告引擎现网维优 QA 问答系统完整方案（Internal API 推理版）
 
-## 文档状态说明（2026-02-13）
+## 文档状态说明（2026-02-14）
 - 当前可运行基线：`backend-python/`（FastAPI）。
-- `backend/`（Rust）当前存在已知运行问题，暂不作为默认运行路径。
-- 本文档保留目标架构设计（含 Rust 方案），实际启动与运维以 `README.md`、`docs/startup-manual.md` 为准。
+- `backend/`（Rust）已完成向量存储重构：Qdrant -> LanceDB（本地文件模式）。
+- 默认运行路径仍为 Python；Rust 运行与运维以 `README.md`、`docs/startup-manual.md` 为准。
 
 ## 1. 目标与背景
 - 目标：建设一个面向广告引擎现网维优场景的中文 QA 系统，支持基于 Markdown 知识库的 RAG（检索增强生成）问答。
@@ -45,14 +45,14 @@
    |          |            \
    |          |             -> [Feedback Store (SQLite/Postgres 可选)]
    |          v
-   |      [Qdrant Vector DB]
+   |      [LanceDB Vector Store]
    |
    -> [Company Internal API]
        |- /v1/embeddings
        |- /v1/chat/completions
 
 [Offline Indexer (Rust Job)]
-  Markdown -> Parse -> Chunk -> Embedding(API) -> Upsert Qdrant
+  Markdown -> Parse -> Chunk -> Embedding(API) -> Upsert LanceDB
 ```
 
 ## 5. 系统模块设计
@@ -76,8 +76,8 @@
   - `config`：配置加载与启动校验（fail-fast）。
 
 ### 5.3 向量检索层
-- 引擎：Qdrant。
-- Collection：`knowledge_chunks`。
+- 引擎：LanceDB（本地文件模式）。
+- Table：`knowledge_chunks`。
 - 向量：由内部 API embeddings 生成。
 - 检索策略：TopK + score 阈值过滤 + 元数据回传。
 
@@ -95,7 +95,7 @@
 ### 6.1 在线问答流程
 1. 前端调用 `POST /api/query`。
 2. 后端调用 embedding API 生成 query 向量。
-3. 在 Qdrant 检索 `top_k=6`，过滤低相关（score < 0.3）。
+3. 在 LanceDB 检索 `top_k=6`，过滤低相关（score < 0.3）。
 4. 组装上下文（控制总 token，保留来源元数据）。
 5. 调用 chat API 生成中文答案。
 6. 返回 `answer + sources + degraded + error_code + trace_id`。
@@ -106,7 +106,7 @@
 2. 仅处理新增/变更文件。
 3. 解析 Markdown 标题层级与正文。
 4. 按策略切片并调用 embedding API。
-5. Upsert 到 Qdrant；删除失效文档 chunk。
+5. Upsert 到 LanceDB；删除失效文档 chunk。
 6. 写入索引作业结果（成功数、失败数、耗时）。
 
 ## 7. 文档处理与切片策略
@@ -153,13 +153,17 @@
 {
   "provider": "internal_api",
   "model": "ad-qa-chat-v1",
+  "vector_store": "lancedb",
+  "vector_table": "knowledge_chunks",
   "index_size": 128734,
   "last_index_time": "2026-02-10T02:10:00Z",
   "upstream_health": "ok",
   "rate_limit_state": {
     "rpm_limit": 120,
     "current_rpm": 43
-  }
+  },
+  "vector_store_connected": true,
+  "qdrant_connected": true
 }
 ```
 
@@ -184,12 +188,18 @@
 
 ### 8.4 `POST /api/reindex`
 - 作用：触发离线索引任务（内网管理接口）。
+- Request（支持全量/增量开关）：
+```json
+{
+  "full": true
+}
+```
 
 ## 9. 内部 API 契约与调用策略
 ### 9.1 Chat 调用参数
 - `model=INTERNAL_API_CHAT_MODEL`（默认 `ad-qa-chat-v1`）
 - `temperature=0.2`
-- `max_tokens=512`
+- `max_tokens=65535`
 - `messages`：system + context + user。
 
 ### 9.2 Embedding 调用参数
@@ -241,10 +251,14 @@
 - 系统入口无鉴权，但必须部署在内网并结合 IP 白名单。
 - Service Token 仅通过环境变量注入，禁止写入代码与日志。
 - 日志脱敏：不记录完整 prompt 与敏感字段，仅记录长度与摘要哈希。
-- 网络策略：仅允许后端出网到 `INTERNAL_API_BASE_URL` 与 Qdrant。
+- 网络策略：仅允许后端出网到 `INTERNAL_API_BASE_URL`；LanceDB 为本地文件访问。
 
 ## 13. 配置清单（最终默认值）
 - `INFER_PROVIDER=internal_api`
+- `VECTOR_STORE=lancedb`
+- `LANCEDB_URI=./.lancedb`
+- `LANCEDB_TABLE=knowledge_chunks`
+- `VECTOR_SCORE_THRESHOLD=0.3`
 - `INTERNAL_API_BASE_URL=<required>`
 - `INTERNAL_API_TOKEN=<required>`
 - `INTERNAL_API_CHAT_PATH=/v1/chat/completions`
@@ -264,10 +278,10 @@
 - 进程/容器：
   - `frontend`
   - `backend`
-  - `qdrant`
+  - `lancedb`（本地目录，无独立进程）
   - `nginx`（可选，反向代理）
 - 不再部署本地 LLM 服务容器。
-- 推荐使用 `docker-compose` 管理并配置健康检查。
+- 推荐 Host-Run 或 systemd 管理后端进程，并对 `LANCEDB_URI` 做磁盘与权限监控。
 
 ## 15. 测试方案与验收标准
 ### 15.1 功能测试

@@ -13,9 +13,7 @@ pub fn map_provider_error(error: &ProviderError) -> ErrorCode {
                 ErrorCode::UpstreamUnavailable
             }
         }
-        ProviderError::ApiError { status, message: _ } => {
-            map_status_code(*status)
-        }
+        ProviderError::ApiError { status, message: _ } => map_status_code(*status),
         ProviderError::Timeout => ErrorCode::UpstreamTimeout,
         ProviderError::SerializationError(_) => ErrorCode::InternalError,
     }
@@ -52,7 +50,7 @@ pub fn get_error_description(code: ErrorCode) -> &'static str {
         ErrorCode::UpstreamAuth => "上游服务认证失败，请检查 API Token",
         ErrorCode::UpstreamUnavailable => "上游服务不可用，请稍后重试",
         ErrorCode::UpstreamError => "上游服务返回错误",
-        ErrorCode::RetrievalFailed => "检索服务失败，请检查 Qdrant 连接",
+        ErrorCode::RetrievalFailed => "检索服务失败，请检查向量存储连接",
         ErrorCode::NoMatch => "未找到相关资料，请尝试其他问题",
         ErrorCode::InternalError => "内部服务错误，请联系技术团队",
     }
@@ -76,22 +74,34 @@ mod tests {
 
     #[test]
     fn test_map_status_401() {
-        assert_eq!(map_status_code(StatusCode::UNAUTHORIZED), ErrorCode::UpstreamAuth);
+        assert_eq!(
+            map_status_code(StatusCode::UNAUTHORIZED),
+            ErrorCode::UpstreamAuth
+        );
     }
 
     #[test]
     fn test_map_status_429() {
-        assert_eq!(map_status_code(StatusCode::TOO_MANY_REQUESTS), ErrorCode::UpstreamRateLimit);
+        assert_eq!(
+            map_status_code(StatusCode::TOO_MANY_REQUESTS),
+            ErrorCode::UpstreamRateLimit
+        );
     }
 
     #[test]
     fn test_map_status_500() {
-        assert_eq!(map_status_code(StatusCode::INTERNAL_SERVER_ERROR), ErrorCode::UpstreamUnavailable);
+        assert_eq!(
+            map_status_code(StatusCode::INTERNAL_SERVER_ERROR),
+            ErrorCode::UpstreamUnavailable
+        );
     }
 
     #[test]
     fn test_map_status_504() {
-        assert_eq!(map_status_code(StatusCode::GATEWAY_TIMEOUT), ErrorCode::UpstreamTimeout);
+        assert_eq!(
+            map_status_code(StatusCode::GATEWAY_TIMEOUT),
+            ErrorCode::UpstreamTimeout
+        );
     }
 
     #[test]

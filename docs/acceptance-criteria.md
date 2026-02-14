@@ -1,20 +1,20 @@
 # EngineQA 验收标准（当前基线）
 
 ## 1. 验收范围
-本标准对应当前可运行实现（Python 后端 + 前端）。
-
-- 后端基线：`backend-python/`
-- Rust 后端：暂不作为本轮验收对象
+本标准覆盖当前仓库两条运行路径：
+- Python 后端（`backend-python/`）+ Qdrant
+- Rust 后端（`backend/`）+ LanceDB
 
 ## 2. 验收前置条件
 - `.env` 已正确配置 `INTERNAL_API_BASE_URL`、`INTERNAL_API_TOKEN`
-- 服务已启动（`BACKEND_RUNTIME=python make dev`）
-- 如使用 embedded 模式，允许 `SKIP_QDRANT=1` 进行基础冒烟
+- 服务已启动（`BACKEND_RUNTIME=python make dev` 或 `BACKEND_RUNTIME=rust make dev`）
+- 对应运行时向量存储配置正确
 
 ## 3. 自动化验收入口
 ### 3.1 Step-01 冒烟（5-10 分钟）
 ```bash
-SKIP_QDRANT=1 ./scripts/smoke-step-01.sh
+BACKEND_RUNTIME=python ./scripts/smoke-step-01.sh
+BACKEND_RUNTIME=rust ./scripts/smoke-step-01.sh
 ```
 
 ### 3.2 Step-13 冒烟
@@ -62,7 +62,8 @@ cd scripts
   - `model`
   - `index_size`
   - `rate_limit_state`
-  - `qdrant_connected`
+  - Python 路径：`qdrant_connected`
+  - Rust 路径：`vector_store`、`vector_store_connected`（兼容字段 `qdrant_connected` 仍可存在）
 
 ### 4.5 索引接口
 - `POST /api/reindex` 可触发任务并返回 `job_id`

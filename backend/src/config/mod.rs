@@ -5,7 +5,11 @@ pub struct AppConfig {
     pub host: String,
     pub port: u16,
     pub infer_provider: String,
-    pub qdrant_url: String,
+    pub vector_store: String,
+    pub lancedb_uri: String,
+    pub lancedb_table: String,
+    pub embedding_vector_size: usize,
+    pub vector_score_threshold: f32,
     pub knowledge_dir: String,
     pub internal_api: InternalApiConfig,
 }
@@ -77,13 +81,17 @@ impl AppConfig {
         let host = optional_var(vars, "APP_HOST", "127.0.0.1");
         let port = parse_u16(vars, "APP_PORT", 8080)?;
 
-        let qdrant_url = optional_var(vars, "QDRANT_URL", "http://localhost:6333");
+        let vector_store = optional_var(vars, "VECTOR_STORE", "lancedb");
+        let lancedb_uri = optional_var(vars, "LANCEDB_URI", "./.lancedb");
+        let lancedb_table = optional_var(vars, "LANCEDB_TABLE", "knowledge_chunks");
+        let embedding_vector_size = parse_usize(vars, "EMBEDDING_VECTOR_SIZE", 1536)?;
+        let vector_score_threshold = parse_f32(vars, "VECTOR_SCORE_THRESHOLD", 0.3)?;
         let knowledge_dir = optional_var(vars, "KNOWLEDGE_DIR", "./knowledge");
 
         let internal_api = InternalApiConfig {
             base_url: required_var(vars, "INTERNAL_API_BASE_URL")?,
             token: required_var(vars, "INTERNAL_API_TOKEN")?,
-            chat_path: optional_var(vars, "INTERNAL_API_CHAT_PATH", "/chat/completions"),
+            chat_path: optional_var(vars, "INTERNAL_API_CHAT_PATH", "/v1/chat/completions"),
             embed_path: optional_var(vars, "INTERNAL_API_EMBED_PATH", "/v1/embeddings"),
             chat_model: optional_var(vars, "INTERNAL_API_CHAT_MODEL", "ad-qa-chat-v1"),
             embed_model: optional_var(vars, "INTERNAL_API_EMBED_MODEL", "ad-embed-v1"),
@@ -100,7 +108,11 @@ impl AppConfig {
             host,
             port,
             infer_provider: optional_var(vars, "INFER_PROVIDER", "internal_api"),
-            qdrant_url,
+            vector_store,
+            lancedb_uri,
+            lancedb_table,
+            embedding_vector_size,
+            vector_score_threshold,
             knowledge_dir,
             internal_api,
         })
@@ -185,6 +197,21 @@ fn parse_usize(
     }
 }
 
+fn parse_f32(
+    vars: &HashMap<String, String>,
+    key: &'static str,
+    default: f32,
+) -> Result<f32, ConfigError> {
+    match vars.get(key).map(|value| value.trim()) {
+        Some(raw) if !raw.is_empty() => raw.parse::<f32>().map_err(|_| ConfigError::InvalidEnv {
+            key,
+            value: raw.to_string(),
+            reason: "expected float number",
+        }),
+        _ => Ok(default),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
@@ -233,6 +260,10 @@ mod tests {
         assert_eq!(config.host, "127.0.0.1");
         assert_eq!(config.port, 8080);
         assert_eq!(config.infer_provider, "internal_api");
+        assert_eq!(config.vector_store, "lancedb");
+        assert_eq!(config.lancedb_table, "knowledge_chunks");
+        assert_eq!(config.embedding_vector_size, 1536);
+        assert_eq!(config.vector_score_threshold, 0.3);
         assert_eq!(config.internal_api.chat_path, "/v1/chat/completions");
         assert_eq!(config.internal_api.embed_model, "ad-embed-v1");
         assert_eq!(config.internal_api.retry_embed_max, 3);

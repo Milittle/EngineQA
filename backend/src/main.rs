@@ -1,12 +1,10 @@
 use tokio::net::TcpListener;
 
 use engineqa_backend::{
-    config::AppConfig,
-    create_app,
-    observability,
-    provider::InternalApiProvider,
-    rag::VectorRetriever,
+    config::AppConfig, create_app, observability, provider::InternalApiProvider,
+    rag::VectorRetriever, vector_store::lancedb_store::LanceDbStore,
 };
+use std::sync::Arc;
 
 #[tokio::main]
 async fn main() {
@@ -24,26 +22,32 @@ async fn main() {
     tracing::info!(
         infer_provider = %config.infer_provider,
         upstream_base = %config.internal_api.base_url,
-        qdrant_url = %config.qdrant_url,
+        vector_store = %config.vector_store,
+        lancedb_uri = %config.lancedb_uri,
+        lancedb_table = %config.lancedb_table,
         "configuration loaded"
     );
 
     // Initialize provider
     let provider = InternalApiProvider::new(config.internal_api.clone());
 
-    // Initialize retriever
-    let retriever = match VectorRetriever::new(&config.qdrant_url) {
-        Ok(retriever) => retriever,
+    // Initialize vector store
+    let vector_store = match LanceDbStore::new(
+        &config.lancedb_uri,
+        &config.lancedb_table,
+        config.embedding_vector_size,
+    )
+    .await
+    {
+        Ok(store) => Arc::new(store),
         Err(err) => {
-            tracing::error!(error = %err, "failed to initialize Qdrant retriever");
+            tracing::error!(error = %err, "failed to initialize LanceDB vector store");
             std::process::exit(1);
         }
     };
 
-    // Ensure collection exists
-    if let Err(err) = retriever.ensure_collection_exists().await {
-        tracing::warn!(error = %err, "failed to ensure Qdrant collection exists");
-    }
+    // Initialize retriever
+    let retriever = VectorRetriever::new(vector_store.clone(), config.vector_score_threshold);
 
     let addr = match config.socket_addr() {
         Ok(addr) => addr,
@@ -61,7 +65,7 @@ async fn main() {
         }
     };
 
-    let app = create_app(&config, provider, retriever);
+    let app = create_app(&config, provider, retriever, vector_store);
 
     tracing::info!(address = %addr, "backend started");
 

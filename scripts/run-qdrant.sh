@@ -3,6 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
+echo "[notice] run-qdrant.sh is for Python backend remote mode only."
+echo "[notice] Rust backend now uses LanceDB local storage and does not require qdrant process."
+
 if ! command -v qdrant >/dev/null 2>&1; then
   echo "qdrant binary not found in PATH."
   echo "install qdrant for host-run, or use: docker compose -f deploy/qdrant-compose.yaml up -d"

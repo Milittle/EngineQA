@@ -5,9 +5,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BACKEND_PORT="${APP_PORT:-8080}"
 FRONTEND_PORT="${FRONTEND_PORT:-5173}"
 DEFAULT_VENV_PYTHON="${ROOT_DIR}/.venv-backend-python/bin/python"
-PYDEPS_DIR="${ROOT_DIR}/backend-python/.pydeps"
 SELECTED_PYTHON_BIN=""
-SELECTED_PYTHONPATH=""
 
 if [[ ! -d "${ROOT_DIR}/frontend/node_modules" ]]; then
   echo "frontend dependencies are missing. run: npm install --prefix frontend"
@@ -30,14 +28,6 @@ resolve_python_bin() {
 
 has_python_deps() {
   local python_bin="$1"
-  local extra_pythonpath="${2:-}"
-
-  if [[ -n "${extra_pythonpath}" ]]; then
-    PYTHONPATH="${extra_pythonpath}${PYTHONPATH:+:${PYTHONPATH}}" \
-      "${python_bin}" -c "import fastapi, uvicorn, httpx, qdrant_client, dotenv" >/dev/null 2>&1
-    return $?
-  fi
-
   "${python_bin}" -c "import fastapi, uvicorn, httpx, qdrant_client, dotenv" >/dev/null 2>&1
 }
 
@@ -57,16 +47,8 @@ select_python_runtime() {
       return 0
     fi
 
-    if [[ -d "${PYDEPS_DIR}" ]] && has_python_deps "${resolved}" "${PYDEPS_DIR}"; then
-      SELECTED_PYTHON_BIN="${resolved}"
-      SELECTED_PYTHONPATH="${PYDEPS_DIR}"
-      return 0
-    fi
-
     echo "python dependencies are missing for backend-python"
     echo "install with: ${resolved} -m pip install -r backend-python/requirements.txt"
-    echo "or fallback without venv:"
-    echo "  python3 -m pip install --target backend-python/.pydeps -r backend-python/requirements.txt"
     return 1
   fi
 
@@ -80,20 +62,12 @@ select_python_runtime() {
       SELECTED_PYTHON_BIN="${resolved}"
       return 0
     fi
-
-    if [[ -d "${PYDEPS_DIR}" ]] && has_python_deps "${resolved}" "${PYDEPS_DIR}"; then
-      SELECTED_PYTHON_BIN="${resolved}"
-      SELECTED_PYTHONPATH="${PYDEPS_DIR}"
-      return 0
-    fi
   done
 
   echo "python dependencies are missing for backend-python"
-  echo "preferred setup:"
+  echo "setup:"
   echo "  python3 -m venv .venv-backend-python"
   echo "  .venv-backend-python/bin/pip install -r backend-python/requirements.txt"
-  echo "fallback without venv:"
-  echo "  python3 -m pip install --target backend-python/.pydeps -r backend-python/requirements.txt"
   return 1
 }
 
@@ -101,19 +75,9 @@ if ! select_python_runtime; then
   exit 1
 fi
 
-if [[ -n "${SELECTED_PYTHONPATH}" ]]; then
-  echo "using python runtime: ${SELECTED_PYTHON_BIN} (PYTHONPATH += backend-python/.pydeps)"
-else
-  echo "using python runtime: ${SELECTED_PYTHON_BIN}"
-fi
+echo "using python runtime: ${SELECTED_PYTHON_BIN}"
 
 backend_cmd() {
-  if [[ -n "${SELECTED_PYTHONPATH}" ]]; then
-    PYTHONPATH="${SELECTED_PYTHONPATH}${PYTHONPATH:+:${PYTHONPATH}}" \
-      "${SELECTED_PYTHON_BIN}" -m uvicorn app.main:app --app-dir backend-python --host 0.0.0.0 --port "${BACKEND_PORT}"
-    return
-  fi
-
   "${SELECTED_PYTHON_BIN}" -m uvicorn app.main:app --app-dir backend-python --host 0.0.0.0 --port "${BACKEND_PORT}"
 }
 
