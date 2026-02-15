@@ -41,9 +41,7 @@ class VectorRetriever:
         return self._collection
 
     def _build_client(self, config: AppConfig) -> QdrantClient:
-        if config.qdrant_mode == "embedded":
-            return QdrantClient(path=config.qdrant_local_path)
-        return QdrantClient(url=config.qdrant_url)
+        return QdrantClient(path=config.qdrant_local_path)
 
     def ensure_collection_exists(self, vector_size: int | None = None) -> None:
         target_vector_size = vector_size or self._vector_size

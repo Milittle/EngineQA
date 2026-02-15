@@ -103,7 +103,7 @@ backend_pid=$!
 ) &
 frontend_pid=$!
 
-echo "backend(runtime=python, qdrant=${QDRANT_MODE:-embedded}) -> http://127.0.0.1:${BACKEND_PORT}/health"
+echo "backend(runtime=python, qdrant=embedded)                -> http://127.0.0.1:${BACKEND_PORT}/health"
 echo "frontend                                             -> http://127.0.0.1:${FRONTEND_PORT}"
 echo "press Ctrl+C to stop"
 

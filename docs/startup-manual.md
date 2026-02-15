@@ -19,9 +19,6 @@ Python 路径需要：
 Rust 路径需要：
 - Rust toolchain
 
-可选（仅 Python + Qdrant remote）：
-- `qdrant` 二进制（用于 `scripts/run-qdrant.sh`）
-
 ## 3. 初始化
 ```bash
 npm install --prefix frontend
@@ -45,8 +42,8 @@ python3 -m venv .venv-backend-python
 
 Python + Qdrant：
 - `BACKEND_RUNTIME=python`
-- `QDRANT_MODE=embedded`（默认）
 - `QDRANT_LOCAL_PATH=./.qdrant-local`
+- `QDRANT_COLLECTION=knowledge_chunks`
 
 Rust + LanceDB：
 - `BACKEND_RUNTIME=rust`
@@ -86,9 +83,7 @@ BACKEND_RUNTIME=rust ./scripts/smoke-step-01.sh
 
 ## 7. 向量存储模式说明
 ### 7.1 Python（Qdrant）
-- embedded：`QDRANT_MODE=embedded`
-- remote：`QDRANT_MODE=remote`
-- remote 本机启动：`./scripts/run-qdrant.sh`
+- embedded（默认且唯一支持）：`QDRANT_LOCAL_PATH=./.qdrant-local`
 
 ### 7.2 Rust（LanceDB）
 - 使用本地目录，不需要独立向量数据库进程
@@ -119,8 +114,7 @@ cargo check --manifest-path backend/Cargo.toml
 
 ### 8.5 检索失败或向量存储连接失败
 Python 路径检查：
-- embedded：`QDRANT_LOCAL_PATH` 可写
-- remote：`QDRANT_URL` 可访问
+- `QDRANT_LOCAL_PATH` 可写
 
 Rust 路径检查：
 - `LANCEDB_URI` 目录可写

@@ -3,7 +3,7 @@
 广告引擎现网维优 QA 问答系统（Internal API 推理版）。
 
 ## 当前实现状态（2026-02-14）
-- 默认运行基线：`backend-python/`（FastAPI + Qdrant）。
+- 默认运行基线：`backend-python/`（FastAPI + Qdrant embedded）。
 - Rust 后端：`backend/` 已完成向量存储重构，检索与索引链路使用 LanceDB 本地存储。
 - 统一入口脚本：`scripts/dev.sh`，通过 `BACKEND_RUNTIME` 切换运行时，或者使用`make dev`、`make dev-python`、`make dev-rust`来启动后端
 
@@ -18,8 +18,6 @@
 ## 端口约定
 - Frontend: `5173`
 - Backend: `8080`
-- Qdrant HTTP（仅 Python remote 模式）: `6333`
-- Qdrant gRPC（仅 Python remote 模式）: `6334`
 
 ## 快速启动（Host-Run，推荐）
 1. 安装前端依赖：
@@ -87,9 +85,7 @@ Rust + LanceDB：
 - `VECTOR_SCORE_THRESHOLD=0.3`
 
 Python + Qdrant：
-- `QDRANT_MODE=embedded|remote`
 - `QDRANT_LOCAL_PATH=./.qdrant-local`
-- `QDRANT_URL=http://127.0.0.1:6333`
 - `QDRANT_COLLECTION=knowledge_chunks`
 
 ## API 清单
@@ -104,7 +100,6 @@ Python + Qdrant：
 - `scripts/dev.sh`: 统一入口（根据 `BACKEND_RUNTIME` 分发）。
 - `scripts/dev-python.sh`: 启动 Python 后端 + 前端。
 - `scripts/dev-rust.sh`: 启动 Rust 后端 + 前端（LanceDB）。
-- `scripts/run-qdrant.sh`: 仅用于 Python remote 模式启动本机 qdrant。
 - `scripts/smoke-step-01.sh`: 基础冒烟（运行时感知）。
 - `scripts/smoke-step-13.sh`: Step-13 冒烟（状态接口感知向量存储）。
 - `scripts/acceptance-test.sh`: 验收测试。

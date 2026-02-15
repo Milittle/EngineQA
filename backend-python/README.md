@@ -5,6 +5,7 @@ FastAPI implementation of EngineQA backend.
 ## 当前状态
 - 这是当前默认可运行后端（2026-02-13）。
 - Rust 后端暂不作为运行基线。
+- Qdrant 仅支持 embedded 模式。
 
 ## 依赖安装
 推荐方式（venv）：
@@ -38,13 +39,10 @@ BACKEND_RUNTIME=python make dev
 - `INTERNAL_API_CHAT_TOKEN`
 - `INTERNAL_API_EMBED_TOKEN`
 
-## Qdrant 模式
-- Embedded（默认）：
-  - `QDRANT_MODE=embedded`
+## Qdrant 配置
+- Embedded（默认且唯一支持）：
   - `QDRANT_LOCAL_PATH=./.qdrant-local`
-- Remote：
-  - `QDRANT_MODE=remote`
-  - `QDRANT_URL=http://127.0.0.1:6333`
+  - `QDRANT_COLLECTION=knowledge_chunks`
 
 ## API
 - `GET /health`

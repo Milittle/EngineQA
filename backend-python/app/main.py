@@ -69,9 +69,8 @@ def _build_state() -> AppState:
     config = AppConfig.from_env()
 
     logger.info(
-        "config_loaded provider=%s qdrant_mode=%s qdrant_collection=%s embedding_vector_size=%s chat_base=%s chat_path=%s embed_base=%s embed_path=%s",
+        "config_loaded provider=%s qdrant_collection=%s embedding_vector_size=%s chat_base=%s chat_path=%s embed_base=%s embed_path=%s",
         config.infer_provider,
-        config.qdrant_mode,
         config.qdrant_collection,
         config.embedding_vector_size,
         config.internal_api.chat_base_url,

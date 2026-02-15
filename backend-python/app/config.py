@@ -61,21 +61,13 @@ class AppConfig:
     port: int
     infer_provider: str
     knowledge_dir: str
-    qdrant_url: str
     qdrant_collection: str
-    qdrant_mode: str
     qdrant_local_path: str
     embedding_vector_size: int
     internal_api: InternalApiConfig
 
     @classmethod
     def from_env(cls) -> "AppConfig":
-        qdrant_mode = _optional_env("QDRANT_MODE", "embedded").lower()
-        if qdrant_mode not in {"embedded", "remote"}:
-            raise ConfigError(
-                "invalid env QDRANT_MODE: expected one of embedded/remote"
-            )
-
         base_url = _optional_env("INTERNAL_API_BASE_URL", "")
         chat_base_url = _optional_env("INTERNAL_API_CHAT_BASE_URL", base_url)
         embed_base_url = _optional_env("INTERNAL_API_EMBED_BASE_URL", base_url)
@@ -118,9 +110,7 @@ class AppConfig:
             port=_int_env("APP_PORT", 8080),
             infer_provider=_optional_env("INFER_PROVIDER", "internal_api"),
             knowledge_dir=_optional_env("KNOWLEDGE_DIR", "./knowledge"),
-            qdrant_url=_optional_env("QDRANT_URL", "http://127.0.0.1:6333"),
             qdrant_collection=_optional_env("QDRANT_COLLECTION", "knowledge_chunks"),
-            qdrant_mode=qdrant_mode,
             qdrant_local_path=_optional_env("QDRANT_LOCAL_PATH", "./.qdrant-local"),
             embedding_vector_size=_int_env("EMBEDDING_VECTOR_SIZE", 1536),
             internal_api=internal_api,

@@ -75,8 +75,8 @@ curl -s -X POST http://127.0.0.1:8080/api/reindex \
 
 ### 3.4 向量存储连接异常
 Python 路径（Qdrant）：
-- embedded：检查 `QDRANT_LOCAL_PATH` 目录权限与磁盘空间
-- remote：检查 `QDRANT_URL` 可达性与 `/healthz`
+- 检查 `QDRANT_LOCAL_PATH` 目录权限与磁盘空间
+- 检查 `QDRANT_COLLECTION` 与实际集合是否一致
 
 Rust 路径（LanceDB）：
 - 检查 `LANCEDB_URI` 目录权限与磁盘空间

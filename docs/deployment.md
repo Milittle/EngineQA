@@ -2,7 +2,7 @@
 
 ## 1. 说明
 本文覆盖两条可部署路径：
-- Python 后端 + Qdrant（当前默认运行基线）
+- Python 后端 + Qdrant embedded（当前默认运行基线）
 - Rust 后端 + LanceDB（向量存储重构后路径）
 
 日期基线：2026-02-14。
@@ -14,7 +14,7 @@
 - 上游：Internal API
 
 Python 路径：
-- 向量库：Qdrant embedded（默认）或 remote（可选）
+- 向量库：Qdrant embedded（默认且唯一支持）
 
 Rust 路径：
 - 向量库：LanceDB 本地目录（默认 `./.lancedb`）
@@ -26,7 +26,6 @@ Rust 路径：
 
 Python 路径额外：
 - Python 3.10+
-- 可选：qdrant 二进制（仅 Qdrant remote 需要）
 
 Rust 路径额外：
 - Rust toolchain（建议 stable）
@@ -55,8 +54,8 @@ python3 -m venv .venv-backend-python
 ### 5.2 推荐配置
 ```dotenv
 BACKEND_RUNTIME=python
-QDRANT_MODE=embedded
 QDRANT_LOCAL_PATH=./.qdrant-local
+QDRANT_COLLECTION=knowledge_chunks
 ```
 
 ### 5.3 启动
@@ -68,16 +67,6 @@ BACKEND_RUNTIME=python make dev
 ```bash
 .venv-backend-python/bin/python -m uvicorn app.main:app \
   --app-dir backend-python --host 0.0.0.0 --port 8080
-```
-
-### 5.4 可选：Qdrant remote
-```dotenv
-QDRANT_MODE=remote
-QDRANT_URL=http://127.0.0.1:6333
-```
-
-```bash
-./scripts/run-qdrant.sh
 ```
 
 ## 6. Rust 后端部署（LanceDB）
