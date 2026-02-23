@@ -151,7 +151,53 @@ Python + Qdrant：
 - `scripts/dev.sh`: 统一入口（根据 `BACKEND_RUNTIME` 分发）。
 - `scripts/dev-python.sh`: 启动 Python 后端 + 前端。
 - `scripts/dev-rust.sh`: 启动 Rust 后端 + 前端（LanceDB）。
+- `scripts/package/build-python-backend.sh`: 打包 Python 运行时（PyInstaller）+ 前端静态资源。
+- `scripts/package/build-rust-backend.sh`: 打包 Rust 运行时（Cargo release）+ 前端静态资源。
 - `scripts/smoke-step-01.sh`: 基础冒烟（运行时感知）。
 - `scripts/smoke-step-13.sh`: Step-13 冒烟（状态接口感知向量存储）。
 - `scripts/acceptance-test.sh`: 验收测试。
 - `scripts/security-check.sh`: 安全检查。
+
+## 运行时打包（按后端运行时分离）
+当前提供两条独立打包链路：
+- Python 后端包：`engineqa-python-backend-<version>-<os>-<arch>`
+- Rust 后端包：`enginqa-rust-backend-<version>-<os>-<arch>`
+
+平台参数：
+- `--os linux|windows`
+- `--arch x86_64|arm64`
+
+Rust 后端打包示例：
+```bash
+./scripts/package/build-rust-backend.sh --os linux --arch x86_64 --version v0.1.0
+```
+
+Python 后端打包示例：
+```bash
+./scripts/package/build-python-backend.sh --os linux --arch x86_64 --version v0.1.0
+```
+
+说明：
+- Python 打包基于 PyInstaller，不支持可靠跨平台构建，必须在目标 `os/arch` 主机上构建。
+- Python 打包需在所选解释器中先安装：`backend-python/requirements.txt` 与 `pyinstaller`。
+- 两条打包链路都会先执行前端构建（`npm --prefix frontend run build`）；若未检测到 `frontend/node_modules`，脚本会自动安装前端依赖（优先 `npm ci`，无锁文件则 `npm install`）。
+- Linux 产物为 `.tar.gz`，Windows 产物为 `.zip`。
+- 包内 `start/stop` 脚本会统一启动/停止“后端 + Nginx（前端静态资源 + `/api` 反向代理）”。
+- 目标机器默认需已安装并可直接调用 `nginx` 命令。
+- 包内包含前端静态资源目录（`frontend/`）、`config/.env.example`、`knowledge/` 和运行目录（`logs/`、`data/`）。
+
+### 发布包运行依赖（目标机器）
+以下为解压后直接运行 `start.sh` / `start.ps1` 的最小依赖：
+- 平台匹配：发布包与目标机器 `os/arch` 必须一致（例如 `linux/x86_64`）。
+- 系统命令：必须可直接调用 `nginx`（在 `PATH` 中）。
+- 外部网络：目标机器必须可访问 Internal API（`INTERNAL_API_BASE_URL`，或 split chat/embed 地址）。
+- 环境变量：至少配置 `INTERNAL_API_BASE_URL`、`INTERNAL_API_TOKEN`（通过 `.env`）。
+- 端口占用：默认使用 `5173`（前端/Nginx）和 `8080`（后端），需确保端口可用。
+- 文件权限：运行用户需要可读写 `data/`、`logs/`、`run/`，并可读 `knowledge/`。
+- 向量数据目录：
+  - Rust 包默认使用 `data/.lancedb`。
+  - Python 包默认使用 `data/.qdrant-local`。
+- 资源规划：仓库当前未定义硬性 CPU/内存门槛，实际资源需求取决于并发请求量、知识库规模和索引增长速度。
+
+补充：
+- Python 发布包基于 PyInstaller，运行时通常不再依赖系统 Python 解释器。

@@ -22,3 +22,7 @@ __pycache__/
 .qdrant-local/
 
 .lancedb/
+
+# Packaging artifacts
+.package-build/
+dist/
