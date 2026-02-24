@@ -94,8 +94,16 @@ class MarkdownIndexer:
                     if len(buffer) >= UPSERT_BATCH_SIZE:
                         self._flush_points(buffer)
                         buffer.clear()
-                except Exception:
+                except Exception as exc:
                     failed_chunks += 1
+                    logger.exception(
+                        "embedding_failed doc_id=%s path=%s section=%s error=%s text_preview=%s",
+                        chunk.doc_id,
+                        chunk.path,
+                        chunk.section,
+                        str(exc),
+                        chunk.text[:100] if len(chunk.text) > 100 else chunk.text,
+                    )
 
         if buffer:
             self._flush_points(buffer)
